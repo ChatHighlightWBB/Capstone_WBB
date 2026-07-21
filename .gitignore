@@ -1,0 +1,6 @@
+# Git 추적 제외 목록
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
