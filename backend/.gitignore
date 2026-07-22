@@ -1,13 +1,13 @@
-# 가상환경
+# Python 및 가상환경 제외
 venv/
-.venv/
-
-# 임시 비디오/이미지 저장소 (대용량 파일 푸시 방지)
-temp_storage/
-
-# 환경 변수 및 보안 (DB 접속 URL 등)
-.env
-
-# Python 캐시 파일
 __pycache__/
 *.pyc
+
+# 백엔드 임시 버퍼 및 다운로드 파일 제외
+temp_storage/
+*.mp4
+*.m4a
+*.jpg
+
+# 환경 변수 및 비밀 키 파일 제외
+.env
