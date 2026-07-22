@@ -3,12 +3,14 @@ import sys
 import subprocess
 import asyncio
 import re
+import shutil
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Dict, Any
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, HttpUrl
 
@@ -42,6 +44,15 @@ app = FastAPI(
     description="KoBERT와 PP-OCRv3를 활용한 멀티모달 분석 기반 스트리밍 하이라이트 요약 플랫폼 API",
     version="1.0.0",
     lifespan=lifespan
+)
+
+# 💡 [예외 처리] React 프론트엔드(localhost:3000) 연동 시 브라우저 차단을 방지하기 위한 CORS 미들웨어 허용
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # --- 1. 요청/응답 데이터 규격 정의 (Pydantic 모델) ---
@@ -78,7 +89,6 @@ class AnalyzeResponse(BaseModel):
     time_series_data: List[TimeSeriesData]
     final_highlights: List[FinalHighlight]
 
-# 💡 [신규 추가] 프론트엔드 시각화 차트 전용 응답 모델
 class ChartDataResponse(BaseModel):
     video_id: str
     timestamps: List[str]
@@ -93,6 +103,8 @@ class ChartDataResponse(BaseModel):
 # --- 2. 풀 멀티모달 통합 스케줄러 계층 ---
 def sync_pipeline_core_runner(full_command: str, output_path: str, platform: str, video_id: str, video_url: str):
     print(f"ℹ️ [WBB 스레드] {platform} 전용 다운로드 엔진 백그라운드 연산 진입.")
+    chat_image_dir = os.path.join(TEMP_STORAGE_DIR, f"{video_id}_chats")
+    
     try:
         # Step 1: 비디오 프록시 파일 다운로드
         result = subprocess.run(
@@ -102,11 +114,14 @@ def sync_pipeline_core_runner(full_command: str, output_path: str, platform: str
             print(f"❌ [엔진 내부 에러 발생]: {result.stderr.strip()}")
             return
 
+        if not os.path.exists(output_path):
+            print(f"❌ [파일 에러] 다운로드된 비디오 파일이 존재하지 않습니다: {output_path}")
+            return
+
         print(f"✅ [WBB 파이프라인] 360p 프록시 다운로드 성공! 저장 파일: {output_path}")
         
         # Step 2: OpenCV 프레임 가공 및 화면 변화량 분석
         from frame_processor import extract_and_crop_chat_frames
-        chat_image_dir = os.path.join(TEMP_STORAGE_DIR, f"{video_id}_chats")
         print(f"🚀 [WBB 파이프라인 연동] 세부 기능 1.2 및 3.1.2 진입 -> OpenCV 프레임 크롭 및 화면 변화량 분석")
         
         visual_changes = extract_and_crop_chat_frames(output_path, chat_image_dir)
@@ -121,7 +136,7 @@ def sync_pipeline_core_runner(full_command: str, output_path: str, platform: str
             
         # Step 4: PP-OCRv3 시계열 텍스트 파싱
         print(f"👁️ [WBB AI 비전 엔진] 세부 기능 3.1.1 진입 -> PP-OCRv3 시계열 텍스트 가공")
-        image_files = sorted([f for f in os.listdir(chat_image_dir) if f.endswith('.jpg')])
+        image_files = sorted([f for f in os.listdir(chat_image_dir) if f.endswith('.jpg')]) if os.path.exists(chat_image_dir) else []
         time_series_logs = []
         
         try:
@@ -229,6 +244,23 @@ def sync_pipeline_core_runner(full_command: str, output_path: str, platform: str
         print(f"❌ [통합 파이프라인 치명적 사후 붕괴]: {str(total_e)}")
         print(f"🐛 [세부 트레이스백]: {traceback.format_exc()}")
 
+    finally:
+        # 💡 [예외 처리] 분석이 성공하든, 중간에 실패하든 서버용 임시 360p 동영상 및 크롭 이미지 폴더 자동 삭제
+        print(f"🧹 [임시 청소] 서버 디스크 공간 확보를 위해 {video_id} 관련 임시 자원을 정리합니다.")
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+                print(f"  └ 🗑️ 임시 비디오 파일 삭제 완료: {output_path}")
+            except Exception as clean_err:
+                print(f"  └ ⚠️ 비디오 삭제 실패: {clean_err}")
+
+        if os.path.exists(chat_image_dir):
+            try:
+                shutil.rmtree(chat_image_dir)
+                print(f"  └ 🗑️ 임시 채팅 크롭 이미지 폴더 삭제 완료: {chat_image_dir}")
+            except Exception as clean_err:
+                print(f"  └ ⚠️ 이미지 폴더 삭제 실패: {clean_err}")
+
 
 async def real_stream_download_task(video_url: str, platform: str, video_id: str):
     print(f"🚀 [WBB 파이프라인] {platform} 영상 프록시 수집 시작 (ID: {video_id})")
@@ -314,23 +346,14 @@ async def start_analysis(request_data: AnalyzeRequest, background_tasks: Backgro
     }
 
 
-# 💡 [신규 구축] 세부 기능 5.1.1 및 5.2.1: 프론트엔드 차트 시각화 데이터 조회 API
 @app.get("/api/v1/chart/{video_id}", response_model=ChartDataResponse)
 async def get_chart_visualization_data(video_id: str):
-    """
-    [설계 이유 (Why)]
-    1. React 프론트엔드(D3.js / Chart.js)에서 시간대별 감정 변화 및 화력 동적 그래프를 
-       즉시 렌더링할 수 있도록 시계열 리스트 데이터 배열을 가공하여 제공합니다.
-    2. 타임라인 마커(Marker) 클릭 시 해당 구간으로 영상을 점프시키는 스마트 인터페이스용
-       1차 하이라이트 타임코드 리스트를 포함합니다.
-    """
     if db.db is None:
         raise HTTPException(status_code=500, detail="데이터베이스 연결이 초기화되지 않았습니다.")
 
     col_analysis = db.db[f"analysis_{video_id}"]
     col_fusion = db.db[f"fusion_{video_id}"]
 
-    # MongoDB Atlas 쿼리 수행 (Motor 비동기 조회)
     analysis_docs = await col_analysis.find({}, {"_id": 0}).to_list(length=2000)
     fusion_docs = await col_fusion.find({}, {"_id": 0}).to_list(length=2000)
 
@@ -340,13 +363,11 @@ async def get_chart_visualization_data(video_id: str):
             detail=f"요청하신 비디오 ID [{video_id}]에 대한 시계열 분석 데이터를 찾을 수 없습니다."
         )
 
-    # 1. Chart.js X축 / Y축 직렬화 배열 추출
     timestamps = [d.get("time_index", "00:00:00") for d in analysis_docs]
     chat_counts = [int(d.get("chat_count", 0)) for d in analysis_docs]
     audio_energies = [float(d.get("librosa_rms_energy", 0.0)) for d in analysis_docs]
     visual_scores = [float(d.get("visual_score", 0.0)) for d in analysis_docs]
 
-    # 2. Late Fusion 스코어 및 타임라인 마커(Candidate Peak) 추출
     fusion_scores = [float(f.get("fusion_score", 0.0)) for f in fusion_docs]
     
     highlight_markers = []
@@ -358,7 +379,6 @@ async def get_chart_visualization_data(video_id: str):
                 "fusion_score": f.get("fusion_score")
             })
 
-    # 3. 전반적인 분위기(Mood) 판정 요약 (세부 기능 5.1.2)
     avg_chat = sum(chat_counts) / len(chat_counts) if chat_counts else 0
     if avg_chat >= 10:
         overall_mood = "🔥 매우 열광적 (High Tension)"

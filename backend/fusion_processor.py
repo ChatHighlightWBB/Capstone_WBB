@@ -8,14 +8,16 @@ def format_seconds_to_time(sec: int) -> str:
 
 def calculate_sliding_window_fusion(time_series_logs: List[Dict], window_size_sec: int = 30, step_sec: int = 5, buffer_sec: int = 3) -> List[Dict]:
     """
-    [설계 이유 (Why)]
-    1. 세부 기능 3.1.2 (Visual Change) 지표를 멀티모달 Late Fusion 가중치 산식에 이식했습니다.
-    2. 세부 기능 4.1.2 (클리핑 버퍼 타임): 추출된 하이라이트 시작/종료 시점에 ±3초 버퍼를 자동 추가하여
-       영상 장면 끊김이 자연스럽도록 보정합니다.
+    [왜 이렇게 작성했는가? (Why)]
+    1. 예외 방어: time_series_logs가 비어있거나, 채팅/오디오 값이 전부 0인 경우 발생할 수 있는
+       ZeroDivisionError(0으로 나누기 오류)를 방지하기 위한 가드 코드를 추가했습니다.
+    2. 세부 기능 4.1.2: 하이라이트 시작/종료 시점에 ±3초 버퍼를 자동 추가합니다.
     """
     print(f"📊 [Late Fusion 엔진] 30초 Sliding Window Multi-modal 스코어링 개시 (입력: {len(time_series_logs)}개)")
     
+    # 💡 [예외 처리 1] 입력 데이터가 아예 없는 경우 안전하게 빈 리스트 반환
     if not time_series_logs:
+        print("⚠️ [Late Fusion 경고] 분석할 시계열 데이터가 비어있습니다.")
         return []
         
     samples_per_window = window_size_sec // step_sec
@@ -24,9 +26,18 @@ def calculate_sliding_window_fusion(time_series_logs: List[Dict], window_size_se
     all_audio_rms = [doc.get("librosa_rms_energy", 0.0) for doc in time_series_logs]
     all_visual_scores = [doc.get("visual_score", 0.0) for doc in time_series_logs]
     
+    # 💡 [예외 처리 2] 평균값이 0이 되어 0으로 나누는 오류를 방지하기 위해 최소 기준값 설정
     avg_chat_count = float(np.mean(all_chat_counts)) if all_chat_counts else 1.0
+    if avg_chat_count == 0:
+        avg_chat_count = 1.0
+        
     avg_audio_rms = float(np.mean(all_audio_rms)) if all_audio_rms else 0.01
+    if avg_audio_rms == 0:
+        avg_audio_rms = 0.01
+        
     avg_visual_score = float(np.mean(all_visual_scores)) if all_visual_scores else 0.01
+    if avg_visual_score == 0:
+        avg_visual_score = 0.01
     
     window_scores = []
     
@@ -38,7 +49,6 @@ def calculate_sliding_window_fusion(time_series_logs: List[Dict], window_size_se
         start_sec = window_docs[0].get("timestamp_sec", 0)
         end_sec = window_docs[-1].get("timestamp_sec", 0) + step_sec
         
-        # 💡 [세부 기능 4.1.2]: 버퍼 타임(±3초) 적용
         buffered_start_sec = max(0, start_sec - buffer_sec)
         buffered_end_sec = end_sec + buffer_sec
         
@@ -46,15 +56,13 @@ def calculate_sliding_window_fusion(time_series_logs: List[Dict], window_size_se
         end_time_str = format_seconds_to_time(buffered_end_sec)
         
         win_chat_sum = int(sum([d.get("chat_count", 0) for d in window_docs]))
-        win_audio_max = float(max([d.get("librosa_rms_energy", 0.0) for d in window_docs]))
-        win_visual_avg = float(np.mean([d.get("visual_score", 0.0) for d in window_docs]))
+        win_audio_max = float(max([d.get("librosa_rms_energy", 0.0) for d in window_docs])) if window_docs else 0.0
+        win_visual_avg = float(np.mean([d.get("visual_score", 0.0) for d in window_docs])) if window_docs else 0.0
         
-        # 멀티모달 기본 가중치 (채팅: 0.5, 오디오: 0.3, 비주얼: 0.2)
         w_chat = 0.5
         w_audio = 0.3
         w_visual = 0.2
         
-        # 저에너지 고감정 반응 보정 로직
         if win_audio_max < avg_audio_rms and win_chat_sum > (avg_chat_count * 1.5 * len(window_docs)):
             w_chat = 0.70
             w_audio = 0.10
