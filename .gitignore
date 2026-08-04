@@ -1,6 +1,18 @@
-# Git 추적 제외 목록
+# 1. 파인튜닝된 AI 모델 가중치 (100MB 초과로 GitHub 푸시 불가)
+kobert_wbb_model/
+*.safetensors
+*.bin
+*.zip
+
+# 2. 파이썬 가상환경 및 캐시
 venv/
-.venv/
 __pycache__/
 *.pyc
-.env
+
+# 3. OS 및 IDE 설정 파일
+.vscode/
+.DS_Store
+
+# 4. 임시 크롤링 결과물 데이터 (필요 시 주석 해제)
+# looksam_chats.csv
+# monster_rat_chats.csv

@@ -1,125 +1,161 @@
-from fastapi import FastAPI
+import os
+import re
+from typing import List
+from fastapi import FastAPI, HTTPException
+import numpy as np
 from pydantic import BaseModel
-from typing import List, Dict, Any
-import yt_dlp  # type: ignore  # Pylance 타입 힌트 미지원 경고 완벽 차단
-import streamlink  # type: ignore  # Pylance 타입 힌트 미지원 경고 완벽 차단
-import math
+import torch
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-# 1. FastAPI 애플리케이션 핵심 객체 선언
+# 1. FastAPI 애플리케이션 초기화
 app = FastAPI(
-    title="와바바 (WBB) 핵심 통합 백엔드",
-    description="7~8월 로드맵: 듀얼 파싱 엔진 및 멀티모달 하이라이트 백엔드"
+    title="와바바(WBB) AI 분석 백엔드 API",
+    description="KoBERT 7대 감정 분석 및 멀티모달 하이라이트 요약 백엔드",
+    version="1.0.0",
 )
 
-# 2. 데이터 송수신 규격 정의 (Pydantic 모델)
-class StreamUrlRequest(BaseModel):
-    url: str
+# 2. 노션 공식 명세 기준 7대 감정 매핑 딕셔너리
+OFFICIAL_EMOTION_LABELS = {
+    0: "기쁨/행복/환호",
+    1: "당황/놀람",
+    2: "분노/짜증",
+    3: "슬픔/좌절",
+    4: "혐오/불쾌",
+    5: "공포/불안",
+    6: "중립/일상",
+}
 
-class HighlightTimelineResponse(BaseModel):
-    timestamp_start_sec: int
-    timestamp_end_sec: int
-    calculated_score: float
+tokenizer = None
+model = None
 
-# 3. 인프라 가동 확인용 기본 라우터
+
+# 3. 서버 가동 시 KoBERT 모델 메모리 로드
+@app.on_event("startup")
+def load_ai_model():
+  """FastAPI 백엔드 서버가 시작될 때 로컬 KoBERT 파인튜닝 모델을 메모리(RAM)에 로드합니다."""
+  global tokenizer, model
+  local_model_path = "./kobert_wbb_model"
+
+  if not os.path.exists(local_model_path):
+    print(f"⚠️ 경고: '{local_model_path}' 경로에 학습된 모델이 없습니다.")
+    return
+
+  print("🚀 [와바바 백엔드] 파인튜닝된 KoBERT AI 모델을 메모리에 로드 중...")
+  try:
+    tokenizer = AutoTokenizer.from_pretrained(
+        "monologg/kobert", trust_remote_code=True
+    )
+    model = AutoModelForSequenceClassification.from_pretrained(
+        local_model_path, num_labels=7
+    )
+    model.eval()
+    print("✅ KoBERT 모델 및 정밀 가드레일 엔진 로드 완료!")
+  except Exception as e:
+    print(f"❌ 모델 로드 중 에러 발생: {str(e)}")
+
+
+# Pydantic 데이터 검증 규격
+class ChatAnalyzeRequest(BaseModel):
+  chat_messages: List[str]
+
+
+class ChatEmotionResult(BaseModel):
+  chat: str
+  pred_label_idx: int
+  pred_label_name: str
+  confidence: float
+  all_probabilities: List[float]
+
+
 @app.get("/")
-def check_server_status() -> Dict[str, str]:
-    return {"status": "online", "project": "WBB (와바바)"}
+def read_root():
+  return {
+      "status": "online",
+      "service": "와바바(WBB) 멀티모달 스트리밍 하이라이트 플랫폼",
+      "model_loaded": model is not None,
+  }
 
-# 4. 멀티 엔진 스트림 수집 API (SOOP / 유튜브 / 치지직 완벽 대응)
-@app.post("/api/v1/stream-metadata")
-def extract_stream_metadata(request: StreamUrlRequest) -> Dict[str, Any]:
-    url = request.url.strip()
 
-    # SOOP TV / 아프리카TV 주소 진입 시 Streamlink 선제 처리
-    if "soop" in url or "afreeca" in url:
-        try:
-            session = streamlink.Streamlink()  # type: ignore
-            session.set_option("http-timeout", 10)
-            streams = session.streams(url)
-            
-            if streams:
-                return {
-                    "status": "success",
-                    "engine": "streamlink",
-                    "platform_data": {
-                        "title": "SOOP 라이브/VOD 스트림",
-                        "streamer": "SOOP BJ",
-                        "duration_sec": "LIVE",
-                        "thumbnail": None
-                    }
-                }
-        except Exception:
-            # Streamlink 실패 시 하단 yt-dlp 보조 실행으로 우회
-            pass
+@app.post("/api/v1/analyze-chats", response_model=List[ChatEmotionResult])
+def analyze_chat_emotions(payload: ChatAnalyzeRequest):
+  """[핵심 API] KoBERT 추론 + 문장 부호 정규식 가드레일이 적용된 실시간 감정 분석 API."""
+  global tokenizer, model
 
-    # yt-dlp 옵션 설정 (SSL 검증 스킵 + 올바른 헤더 구조)
-    ydl_opts = {
-        'skip_download': True,
-        'quiet': True,
-        'no_warnings': True,
-        'nocheckcertificate': True,  # SSL 인증서 검증 스킵
-        'ignoreerrors': True,        # 메타데이터 일부 누락 시에도 에러 무시
-        'http_headers': {            # yt-dlp 정식 헤더 규격
-            'User-Agent': (
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/120.0.0.0 Safari/537.36'
-            )
-        }
-    }
+  if model is None or tokenizer is None:
+    raise HTTPException(
+        status_code=500, detail="AI 모델이 메모리에 로드되지 않았습니다."
+    )
 
-    # yt-dlp 메인 엔진 가동 (# type: ignore로 Pylance 검사 차단)
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore
-            info_dict = ydl.extract_info(url, download=False)
-            
-            if not info_dict:
-                return {
-                    "status": "error",
-                    "message": "영상을 찾을 수 없거나 접근이 차단되었습니다."
-                }
+  results = []
 
-            streamer_name = (
-                info_dict.get("channel") 
-                or info_dict.get("uploader") 
-                or info_dict.get("creator") 
-                or "Unknown Streamer"
-            )
+  for chat in payload.chat_messages:
+    chat_text = str(chat).strip()
+    if not chat_text:
+      continue
 
-            return {
-                "status": "success",
-                "engine": "yt-dlp",
-                "platform_data": {
-                    "title": info_dict.get("title", "방송 제목 없음"),
-                    "streamer": streamer_name,
-                    "duration_sec": info_dict.get("duration", "LIVE"),
-                    "thumbnail": info_dict.get("thumbnail")
-                }
-            }
-    except Exception as e:
-        return {
-            "status": "error", 
-            "message": f"yt-dlp 추출 실패: {str(e)}"
-        }
+    # 1. KoBERT 모델 신경망 추론
+    inputs = tokenizer(
+        chat_text,
+        return_tensors="pt",
+        truncation=True,
+        padding="max_length",
+        max_length=64,
+    )
 
-# 5. 7~8월 알고리즘 대응용 Mock 하이라이트 API
-@app.get("/api/v1/mock-highlight-windows", response_model=List[HighlightTimelineResponse])
-def get_mock_highlight_windows() -> List[HighlightTimelineResponse]:
-    mock_timeline: List[HighlightTimelineResponse] = []
+    with torch.no_grad():
+      outputs = model(**inputs)
+      logits = outputs.logits
+      probs = torch.softmax(logits, dim=1).squeeze().tolist()
+      pred_idx = int(np.argmax(probs))
 
-    for sec in range(0, 7200, 30):
-        mock_chat_density = abs(math.sin(sec / 500)) * 50  
-        mock_emotion_intensity = abs(math.cos(sec / 300)) * 0.8  
+    # 2. 정규식을 통한 문장 부호 및 단독 특수문자 패턴 검사
+    clean_text = re.sub(r"[^\w\s]", "", chat_text).strip()  # 특수문자 제거 텍스트
+    only_punctuation = len(clean_text) == 0  # 텍스트 없이 순수 특수문자만 존재하는지 여부
+    has_question = bool(re.search(r"\?+", chat_text))  # 물음표 포함 여부
+    has_exclamation = bool(re.search(r"!+", chat_text))  # 느낌표 포함 여부
 
-        weighted_score = round((mock_chat_density * 0.6) + (mock_emotion_intensity * 100 * 0.4), 2)
+    # 3. [핵심] 정밀 가드레일 및 라벨/확률 보정 알고리즘
+    # (A) 텍스트 없이 순수 '???' 나 '?' 만 있는 경우 -> [1] 당황/놀람 처리
+    if only_punctuation and has_question:
+      pred_idx = 1
+      probs = [0.05, 0.85, 0.02, 0.02, 0.02, 0.02, 0.02]
 
-        if weighted_score >= 45.0:
-            item = HighlightTimelineResponse(
-                timestamp_start_sec=sec,
-                timestamp_end_sec=sec + 30,
-                calculated_score=weighted_score
-            )
-            mock_timeline.append(item)
+    # (B) 텍스트 없이 순수 '!!!' 나 '!' 만 있는 경우 -> [0] 기쁨/환호 처리
+    elif only_punctuation and has_exclamation:
+      pred_idx = 0
+      probs = [0.85, 0.05, 0.02, 0.02, 0.02, 0.02, 0.02]
 
-    mock_timeline.sort(key=lambda x: x.calculated_score, reverse=True)
-    return mock_timeline[:10]
+    # (C) 텍스트 + 물음표 조합 (예: "와 이건 오바 아니냐??", "대박이야??") -> [1] 당황/놀람
+    elif has_question and any(
+        kw in chat_text
+        for kw in ["오바", "진짜", "대박", "뭐하", "이게", "헐", "엥", "레전드", "나가"]
+    ):
+      pred_idx = 1
+      probs[1] = max(probs[1], 0.75)
+
+    # (D) 단어별 맥락 보정 (예: "대박이네", "대박!") -> [0] 기쁨/환호
+    elif "대박" in chat_text and not has_question:
+      pred_idx = 0
+      probs[0] = max(probs[0], 0.85)
+
+    # (E) 명확한 부정 키워드 가드레일
+    elif any(kw in chat_text for kw in ["빡치", "뇌절", "개못하"]):
+      pred_idx = 2  # 분노
+      probs[2] = max(probs[2], 0.80)
+    elif any(kw in chat_text for kw in ["더럽", "찝찝", "토나오", "극혐"]):
+      pred_idx = 4  # 혐오
+      probs[4] = max(probs[4], 0.80)
+
+    confidence = float(probs[pred_idx] * 100)
+
+    results.append(
+        ChatEmotionResult(
+            chat=chat_text,
+            pred_label_idx=pred_idx,
+            pred_label_name=OFFICIAL_EMOTION_LABELS[pred_idx],
+            confidence=round(confidence, 2),
+            all_probabilities=[round(float(p), 4) for p in probs],
+        )
+    )
+
+  return results
