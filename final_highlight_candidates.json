@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "source_video": "./test_sample.mp4",
+    "top_k_limit": 10,
+    "max_duration_cap_sec": 900.0,
+    "total_highlights_count": 1,
+    "total_highlight_duration_sec": 45.0
+  },
+  "highlights": [
+    {
+      "start_time": 20.0,
+      "end_time": 65.0,
+      "duration": 45.0,
+      "stage1_chat_score": 12.94,
+      "streamer_speech_text": "아, 나... 1원 어? 하이 정리 아, 잡내하는 걸 또 난 기대가 컸구나 아, 하하하하 아, 내가 너무 생각을 안 한다 정리 생각해 아, 잘 들었구나 조금 본 느낌? 아, 진짜 아, 근데 하이가 바텀 동선이 일 수가 없었는데 온 거 알아 아우 아, 아까 봤으면은... 진짜 명은 사랑단 뭔데 명이 때문에 계속 오는 거 같아 대박네 그래 보이네 그러네 멱쯰로 오네 명이 때문에 하이 근데 저러면 먹을 거 없을까? 저 쯰로 오는 걸 빨리 할까 봐",
+      "streamer_speech_emotion": "기쁨",
+      "streamer_joy_score": 82.43,
+      "final_highlight_score": 33.79,
+      "rank": 1
+    }
+  ]
+}

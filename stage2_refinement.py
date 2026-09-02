@@ -1,181 +1,186 @@
 import os
+import json
 import subprocess
-from typing import Dict
-import numpy as np
 import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-import whisper
+import pandas as pd
+import torch.nn.functional as F
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
+class WBBStage2Refinement:
+    """
+    [설명]
+    1. 1차 후보 클립 대상 Whisper STT 음성 인식 및 KoBERT 발화 감정을 평가합니다.
+    2. 최종 점수 기준 상위 10개(Top-10) 클립을 확정합니다.
+    3. 누적 하이라이트 총 재생 시간이 최대 상한선(max_total_seconds, 기본 15분)을 넘지 않도록 통제합니다.
+    """
+    def __init__(self, model_dir: str = "./kobert_wbb_model"):
+        print("🧠 [1/3] 2차 검증용 KoBERT 및 Whisper STT 모델 로딩 중...")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.emotion_labels = ["기쁨", "당황", "분노", "불안", "상처", "슬픔", "중립"]
 
-class WBBStage2RefinementEngine:
-  """[설명] 와바바(WBB) 제안서 4.3 규격: Demucs 보컬 분리 + Whisper STT + KoBERT 2차 정밀 검증 엔진.
+        try:
+            from tokenization_kobert import KoBERTTokenizer
+            self.tokenizer = KoBERTTokenizer.from_pretrained("skt/kobert-base-v1")
+        except Exception:
+            self.tokenizer = AutoTokenizer.from_pretrained("skt/kobert-base-v1", trust_remote_code=True)
 
-  1차 하이라이트 후보 클립에서 게임 소음을 제거하고 스트리머 목소리만 추출하여
-  감정을 판정합니다.
-  """
+        if os.path.exists(model_dir) and os.path.isdir(model_dir):
+            try:
+                self.kobert = AutoModelForSequenceClassification.from_pretrained(model_dir)
+            except Exception:
+                self.kobert = AutoModelForSequenceClassification.from_pretrained("skt/kobert-base-v1", num_labels=7)
+        else:
+            self.kobert = AutoModelForSequenceClassification.from_pretrained("skt/kobert-base-v1", num_labels=7)
 
-  def __init__(self, kobert_model_path: str = "./kobert_wbb_model"):
-    print("🚀 [와바바 Stage 2 Engine] 2차 정밀 검증 AI 모델 로딩 중...")
+        self.kobert.to(self.device)
+        self.kobert.eval()
+        self.vocab_size = self.kobert.config.vocab_size
 
-    # 1. Whisper 모델 로드 (base보다 한국어 인식률이 월등히 높은 small 모델 사용)
-    # GPU(CUDA) 가용 시 GPU로 자동 할당, 없을 시 CPU 모드 구동
-    self.device = "cuda" if torch.cuda.is_available() else "cpu"
-    self.whisper_model = whisper.load_model("small", device=self.device)
+        import whisper
+        self.whisper_model = whisper.load_model("base", device="cpu")
+        print("✅ 2차 검증 엔진 로딩 완료")
 
-    # 2. KoBERT 모델 메모리 로드
-    self.tokenizer = AutoTokenizer.from_pretrained(
-        "monologg/kobert", trust_remote_code=True
-    )
-    self.kobert = AutoModelForSequenceClassification.from_pretrained(
-        kobert_model_path, num_labels=7
-    )
-    self.kobert.eval()
+    def _extract_clip_audio(self, video_path: str, start_time: float, duration: float, output_wav: str):
+        os.makedirs(os.path.dirname(output_wav) or ".", exist_ok=True)
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(start_time),
+            "-t", str(duration),
+            "-i", video_path,
+            "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+            output_wav
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
-    self.labels = {
-        0: "기쁨/행복/환호",
-        1: "당황/놀람",
-        2: "분노/짜증",
-        3: "슬픔/좌절",
-        4: "혐오/불쾌",
-        5: "공포/불안",
-        6: "중립/일상",
-    }
+    def analyze_streamer_speech_emotion(self, text: str) -> dict:
+        if not text or not str(text).strip():
+            return {"dominant_emotion": "중립", "joy_score": 0.0}
 
-    # 게임 방송 특화 Whisper 사전 프롬프트 (인식률 향상 힌트)
-    self.gaming_prompt = (
-        "스트리머 게임 방송 실시간 대화, 배틀그라운드, 롤, 치지직, 유튜브, 감탄사,"
-        " 비속어, 신조어, 헐, 대박, 레전드, 아악, 개웃기네, 미쳤다"
-    )
+        inputs = self.tokenizer(str(text), return_tensors="pt", truncation=True, max_length=64, padding=True)
+        inputs["input_ids"] = torch.clamp(inputs["input_ids"], min=0, max=self.vocab_size - 1).to(self.device)
 
-  def extract_vocals_with_demucs(self, clip_path: str) -> str:
-    """[핵심] Demucs AI를 실행하여 영상에서 총소리/배경음을 제거하고 스트리머 목소리(vocals.wav)만 추출합니다."""
-    clip_name = os.path.splitext(os.path.basename(clip_path))[0]
-    output_dir = "./temp_separated"
-    vocal_path = os.path.join(
-        output_dir, "htdemucs", clip_name, "vocals.wav"
-    )
+        with torch.no_grad():
+            outputs = self.kobert(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs.get("attention_mask", None)
+            )
+            probs = F.softmax(outputs.logits, dim=-1).squeeze().cpu().numpy()
 
-    # 이미 분리된 보컬 파일이 존재하면 재사용 (처리 속도 최적화)
-    if os.path.exists(vocal_path):
-      return vocal_path
+        joy_score = round(float(probs[0]) * 100, 2)
+        dominant_idx = int(probs.argmax())
+        return {
+            "dominant_emotion": self.emotion_labels[dominant_idx],
+            "joy_score": joy_score
+        }
 
-    print(
-        f"🎧 [Demucs 보컬 분리] '{clip_name}' 영상에서 배경음/효과음 제거"
-        " 중..."
-    )
-    cmd = [
-        "demucs",
-        "--two-stems=vocals",  # 보컬과 배경음(No Vocals) 2개로만 고속 분리
-        "-n",
-        "htdemucs",  # 경량 고성능 기본 분리 모델
-        "-o",
-        output_dir,
-        clip_path,
-    ]
+    def refine_candidates(self, video_path: str = "./test_sample.mp4", 
+                          stage1_json: str = "stage1_candidates.json",
+                          top_k: int = 10,                       # 제안서 4.3.3: 상위 10개 클립 확정
+                          max_total_seconds: float = 900.0,       # 최대 15분(900초) 분량으로 제한
+                          output_json: str = "final_highlight_candidates.json"):
+        if not os.path.exists(stage1_json):
+            raise FileNotFoundError(f"'{stage1_json}' 파일이 없습니다.")
 
-    try:
-      subprocess.run(
-          cmd,
-          check=True,
-          stdout=subprocess.DEVNULL,
-          stderr=subprocess.DEVNULL,
-      )
-      if os.path.exists(vocal_path):
-        print("✅ 보컬 분리 완료 (vocals.wav 확보)")
-        return vocal_path
-    except Exception as e:
-      print(
-          f"⚠️ Demucs 분리 실패 (원음으로 대체 진행): {str(e)}"
-      )
+        with open(stage1_json, "r", encoding="utf-8") as f:
+            stage1_data = json.load(f)
 
-    return clip_path  # 분리 실패 시 원본 영상 파일 경로 반환 (Fallback)
+        candidates = stage1_data.get("candidate_clips", [])
+        if not candidates:
+            print("⚠️ 1차 후보 클립이 비어 있습니다.")
+            return []
 
-  def analyze_streamer_speech(self, clip_path: str) -> Dict:
-    """[핵심] 보컬 분리 음성을 바탕으로 Whisper STT 및 KoBERT 2차 감정 검증 수행"""
-    if not os.path.exists(clip_path):
-      raise FileNotFoundError(f"'{clip_path}' 클립 파일이 없습니다.")
+        print("=" * 70)
+        print(f"🎙️ [2차 정밀 검증 및 Top-{top_k} 선별 시작] 총 {len(candidates)}개 후보 대상")
+        print("=" * 70)
 
-    # 1. Demucs를 통한 순수 목소리(vocals.wav) 추출
-    audio_target = self.extract_vocals_with_demucs(clip_path)
+        evaluated_clips = []
+        temp_audio_dir = "./temp_separated"
+        os.makedirs(temp_audio_dir, exist_ok=True)
 
-    # 2. Whisper STT 실행 (프롬프트 주입 및 beam_size=3 설정으로 정확도 향상)
-    print(
-        f"🎙️ [Whisper STT] '{os.path.basename(audio_target)}' 음성 텍스트"
-        " 변환 중..."
-    )
-    stt_result = self.whisper_model.transcribe(
-        audio_target,
-        language="ko",
-        initial_prompt=self.gaming_prompt,
-        beam_size=3,  # 문맥 탐색 정밀도 향상
-        fp16=(self.device == "cuda"),
-    )
+        for idx, clip in enumerate(candidates):
+            start = clip["start_time"]
+            duration = clip["duration"]
+            end = clip["end_time"]
+            stage1_score = clip["window_score"]
 
-    transcribed_text = stt_result.get("text", "").strip()
+            wav_path = os.path.join(temp_audio_dir, f"clip_{idx}_{int(start)}.wav")
+            
+            # 오디오 추출 및 STT
+            self._extract_clip_audio(video_path, start, duration, wav_path)
+            stt_result = self.whisper_model.transcribe(wav_path, language="ko")
+            spoken_text = stt_result.get("text", "").strip()
 
-    if not transcribed_text:
-      return {
-          "clip_path": clip_path,
-          "speech_text": "(음성 발화 없음)",
-          "streamer_emotion_idx": 6,
-          "streamer_emotion_name": self.labels[6],
-          "streamer_emotion_score": 0.0,
-          "emotion_strength": 0.0,
-          "is_verified": False,
-      }
+            # 발화 감정 분석
+            emotion_res = self.analyze_streamer_speech_emotion(spoken_text)
+            speech_joy = emotion_res["joy_score"]
 
-    # 3. KoBERT 모델을 통한 감정 점수 산출
-    inputs = self.tokenizer(
-        transcribed_text,
-        return_tensors="pt",
-        truncation=True,
-        padding="max_length",
-        max_length=128,
-    )
+            # 최종 스코어 = 1차 점수 70% + 2차 스트리머 발화 점수 30%
+            final_score = round((stage1_score * 0.7) + (speech_joy * 0.3), 2)
 
-    with torch.no_grad():
-      outputs = self.kobert(**inputs)
-      probs = torch.softmax(outputs.logits, dim=1).squeeze().tolist()
-      pred_idx = int(np.argmax(probs))
+            item = {
+                "start_time": start,
+                "end_time": end,
+                "duration": duration,
+                "stage1_chat_score": stage1_score,
+                "streamer_speech_text": spoken_text if spoken_text else "(음성 발화 없음)",
+                "streamer_speech_emotion": emotion_res["dominant_emotion"],
+                "streamer_joy_score": speech_joy,
+                "final_highlight_score": final_score
+            }
+            evaluated_clips.append(item)
+            print(f" ➔ [{idx+1}/{len(candidates)}] {start}초~{end}초 | 발화: \"{spoken_text[:25]}\" | 최종 점수: {final_score}")
 
-    # 감정 강도: 중립(6번)을 제외한 유의미 감정(0~5번) 확률의 합계
-    emotion_strength = sum(probs[0:6])
-    # 2차 검증 통과 기준: 일상 잡담(중립)이 아니고 뚜렷한 감정이 나타난 경우
-    is_verified = emotion_strength > 0.45
+        # ----------------------------------------------------
+        # [핵심 로직] Top-K 랭킹 및 최대 재생 시간(Duration Cap) 제한
+        # ----------------------------------------------------
+        # 1. 점수 높은 순으로 정렬
+        sorted_clips = sorted(evaluated_clips, key=lambda x: x["final_highlight_score"], reverse=True)
 
-    return {
-        "clip_path": clip_path,
-        "speech_text": transcribed_text,
-        "streamer_emotion_idx": pred_idx,
-        "streamer_emotion_name": self.labels[pred_idx],
-        "streamer_emotion_score": round(float(probs[pred_idx] * 100), 2),
-        "emotion_strength": round(float(emotion_strength), 4),
-        "is_verified": is_verified,
-    }
+        final_selected = []
+        accumulated_sec = 0.0
 
+        for clip in sorted_clips:
+            # 상위 top_k(10개) 초과 시 중단
+            if len(final_selected) >= top_k:
+                break
+            # 누적 재생 시간이 상한선(예: 15분)을 초과하지 않는 클립만 추가 (최소 1개는 보장)
+            if (accumulated_sec + clip["duration"]) <= max_total_seconds or len(final_selected) == 0:
+                final_selected.append(clip)
+                accumulated_sec += clip["duration"]
 
-# 단독 검증 실행 루틴
+        # 2. 영상 흐름에 맞게 시간 순서대로 재정렬
+        final_selected = sorted(final_selected, key=lambda x: x["start_time"])
+        for idx, c in enumerate(final_selected):
+            c["rank"] = idx + 1
+
+        final_payload = {
+            "metadata": {
+                "source_video": video_path,
+                "top_k_limit": top_k,
+                "max_duration_cap_sec": max_total_seconds,
+                "total_highlights_count": len(final_selected),
+                "total_highlight_duration_sec": round(accumulated_sec, 2)
+            },
+            "highlights": final_selected
+        }
+
+        with open(output_json, "w", encoding="utf-8") as jf:
+            json.dump(final_payload, jf, ensure_ascii=False, indent=2)
+
+        pd.DataFrame(final_selected).to_csv("final_highlight_candidates.csv", index=False, encoding="utf-8-sig")
+
+        print("\n" + "=" * 70)
+        print(f"✅ [최종 확정] 총 {len(final_selected)}개 클립 확정 (총 요약 길이: {accumulated_sec:.1f}초)")
+        print(f" ➔ 결과 파일: '{output_json}', 'final_highlight_candidates.csv'")
+        print("=" * 70)
+        return final_selected
+
 if __name__ == "__main__":
-  engine = WBBStage2RefinementEngine()
-
-  TEST_CLIP_PATH = "./temp_clips/clip_test_1.mp4"
-
-  if not os.path.exists(TEST_CLIP_PATH):
-    print(f"⚠️ '{TEST_CLIP_PATH}' 파일이 없습니다. 'python ffmpeg_clipper.py'를 먼저 실행해 주세요.")
-  else:
-    result = engine.analyze_streamer_speech(TEST_CLIP_PATH)
-
-    print("\n🎯 [개선된 2차 스트리머 발화 정밀 검증 결과]")
-    print("=" * 75)
-    print(f"🎬 검증 대상 클립: {result['clip_path']}")
-    print(f"🗣️ 추출된 발화 내용: \"{result['speech_text']}\"")
-    print(
-        f"🎭 스트리머 감정 판정: [{result['streamer_emotion_idx']}]"
-        f" {result['streamer_emotion_name']}"
-    )
-    print(f"📊 감정 확신도: {result['streamer_emotion_score']}%")
-    print(f"🔥 감정 강도 (Non-Neutral Score): {result['emotion_strength']}")
-    print(
-        "✅ 2차 검증 판정:"
-        f" {'[통과] 최종 하이라이트 확정' if result['is_verified'] else '[탈락] 단순 일상 대화'}"
+    refiner = WBBStage2Refinement()
+    refiner.refine_candidates(
+        video_path="./test_sample.mp4",
+        stage1_json="stage1_candidates.json",
+        top_k=10,
+        max_total_seconds=900.0,
+        output_json="final_highlight_candidates.json"
     )

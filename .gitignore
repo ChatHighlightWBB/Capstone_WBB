@@ -1,18 +1,28 @@
-# 1. 파인튜닝된 AI 모델 가중치 (100MB 초과로 GitHub 푸시 불가)
-kobert_wbb_model/
-*.safetensors
-*.bin
-*.zip
-
-# 2. 파이썬 가상환경 및 캐시
+# Python 가상환경 및 캐시
 venv/
 __pycache__/
 *.pyc
 
-# 3. OS 및 IDE 설정 파일
-.vscode/
-.DS_Store
+# AI 모델 가중치 및 대용량 체크포인트 (GitHub 100MB 제한 방어)
+kobert_wbb_model/
+*.safetensors
+*.bin
+*.tar
+*.pdparams
+*.pdopt
+*.pdmodel
 
-# 4. 임시 크롤링 결과물 데이터 (필요 시 주석 해제)
-# looksam_chats.csv
-# monster_rat_chats.csv
+# 임시 처리 디렉토리 및 캐시
+temp_clips/
+temp_separated/
+.pytest_cache/
+
+# 영상 및 오디오 미디어 파일 (구글 드라이브로 공유)
+*.mp4
+*.wav
+*.avi
+*.mkv
+
+# OS 자동 생성 파일
+.DS_Store
+Thumbs.db

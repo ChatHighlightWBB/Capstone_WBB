@@ -1,168 +1,133 @@
 import os
-import shutil
-from typing import Dict, List
+import sys
+
+# ==============================================================================
+# [핵심 수정 1] Windows C++ DLL 충돌(WinError 127) 방어 코드
+# PaddleOCR과 PyTorch 간 OpenMP 라이브러리 충돌을 막기 위해 반드시 최상단 선언
+# ==============================================================================
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["FLAGS_enable_pir_api"] = "0"
+os.environ["FLAGS_use_mkldnn"] = "0"
+
+# PyTorch 엔진을 최우선으로 메모리에 로드하여 shm.dll 로딩 실패 원천 차단
+import torch
+import time
+
+# 개별 AI/비전/오디오 모듈 임포트
+from ppocr_chat_extractor import WBBPPOCRExtractor
+from automated_dataset_generator import WBBEmotionDatasetGenerator
+from sliding_window_nlp import WBBSlidingWindowDetector
+from stage2_refinement import WBBStage2Refinement
 from ffmpeg_clipper import WBBFFmpegClipper
-from multimodal_fusion import WBBMultimodalFusionEngine
-from sliding_window_nlp import WBBWindowNLPAnalyzer
-from stage2_refinement import WBBStage2RefinementEngine
-from test_real_video import extract_real_audio_energy, extract_real_visual_changes
 
+class WBBAutoHighlightPipeline:
+    """
+    [설명]
+    사용자가 영상을 업로드했을 때 1차/2차 멀티모달 분석부터 최종 영상 클리핑까지 
+    자동으로 전 과정을 수행하는 와바바(WBB) 올인원 파이프라인 클래스
+    """
+    def __init__(self, model_dir: str = "./kobert_wbb_model"):
+        print("=" * 80)
+        print("🚀 [와바바 WBB] 멀티모달 자동 하이라이트 파이프라인 엔진 초기화 중...")
+        print("=" * 80)
+        
+        # 1. 각 단계별 인퍼런스 엔진 로드
+        self.ocr_extractor = WBBPPOCRExtractor()
+        self.emotion_generator = WBBEmotionDatasetGenerator(model_dir=model_dir)
+        self.stage2_refiner = WBBStage2Refinement(model_dir=model_dir)
+        self.clipper = WBBFFmpegClipper()
+        print("✅ 모든 AI/NLP/Vision 엔진 로딩 완료!\n")
 
-class WBBHighlightMasterPipeline:
-  """[설명] 와바바(WBB) 전체 하이라이트 자동 생성 통합 마스터 파이프라인
+    def run_full_pipeline(self, video_path: str = "./test_sample.mp4", crop_box: tuple = (0.15, 0.65, 0.60, 0.98)) -> dict:
+        """
+        [설명] 
+        영상 경로를 입력받아 Step 1 ~ Step 5 전 과정을 순차 실행하고 
+        시각화 데이터셋(JSON/CSV)과 최종 영상 경로를 반환합니다.
+        """
+        start_total_time = time.time()
+        
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"입력 영상 파일을 찾을 수 없습니다: {video_path}")
 
-  1차 멀티모달 Late Fusion -> FFmpeg 클리핑 -> 2차 Demucs/Whisper/KoBERT 정밀
-  검증 -> FFmpeg 최종 병합
-  """
-
-  def __init__(self):
-    print("🚀 [WBB Master Pipeline] 와바바 통합 하이라이트 엔진 가동...")
-    self.nlp_engine = WBBWindowNLPAnalyzer()
-    self.fusion_engine = WBBMultimodalFusionEngine()
-    self.clipper = WBBFFmpegClipper(temp_dir="./temp_clips")
-    self.stage2_engine = WBBStage2RefinementEngine()
-
-  def run_full_pipeline(
-      self,
-      video_path: str,
-      chat_logs: List[Dict],
-      output_final_video: str = "./final_highlight.mp4",
-  ) -> Dict:
-    """[핵심] 원본 영상과 채팅 데이터를 입력받아 최종 하이라이트 영상을 생성합니다."""
-    if not os.path.exists(video_path):
-      raise FileNotFoundError(f"'{video_path}' 파일을 찾을 수 없습니다.")
-
-    # 1. 영상 메타데이터 분석 및 1차 신호 추출 (비전/오디오)
-    print("\n" + "=" * 80)
-    print("🎬 [STEP 1] 1차 멀티모달 신호 추출 및 30초 Sliding Window 분석")
-    print("=" * 80)
-
-    # 넉넉하게 120초 영상 분량 기준 신호 분석
-    video_duration = 120
-    audio_energies = extract_real_audio_energy(video_path, video_duration)
-    visual_changes = extract_real_visual_changes(video_path, video_duration)
-
-    # 30초 단위 NLP 감정 밀도 계산
-    nlp_windows = self.nlp_engine.process_sliding_window(
-        chat_logs, video_duration
-    )
-
-    # Late Fusion 융합 점수 계산
-    fusion_results = []
-    for i, nlp_win in enumerate(nlp_windows):
-      a_val = audio_energies[i] if i < len(audio_energies) else 0.1
-      v_val = visual_changes[i] if i < len(visual_changes) else 0.1
-      fusion_results.append(
-          self.fusion_engine.calculate_window_fusion_score(
-              nlp_win, a_val, v_val
-          )
-      )
-
-    # 1차 후보군 추출 (동적 임계점 적용)
-    stage1_summary = self.fusion_engine.extract_candidate_highlights(
-        fusion_results
-    )
-    candidates = stage1_summary["candidates"]
-    print(f"✅ 1차 후보 구간 탐색 완료: 총 {len(candidates)}개 구간 선정")
-
-    if not candidates:
-      print("⚠️ 하이라이트 기준치를 충족하는 후보 구간이 없습니다.")
-      return {"status": "fail", "message": "No candidates found"}
-
-    # 2. FFmpeg 무인코딩 고속 클리핑
-    print("\n" + "=" * 80)
-    print("✂️ [STEP 2] FFmpeg 무인코딩 스트림 복사(Stream Copy) 클리핑")
-    print("=" * 80)
-
-    clipped_paths = []
-    for idx, cand in enumerate(candidates):
-      clip_name = f"candidate_{idx+1}.mp4"
-      clip_path = self.clipper.clip_candidate_segment(
-          video_path=video_path,
-          start_sec=cand["start_sec"],
-          end_sec=cand["end_sec"],
-          output_filename=clip_name,
-          buffer_sec=2.0,  # 앞뒤 2초 버퍼
-      )
-      if clip_path:
-        cand["clip_path"] = clip_path
-        clipped_paths.append(clip_path)
-        print(
-            f" ➔ 클립 {idx+1} 생성: {clip_name} ({cand['start_sec']}s ~"
-            f" {cand['end_sec']}s)"
+        print(f"🎬 [전체 파이프라인 자동 가동] 대상 영상: {video_path}")
+        
+        # ----------------------------------------------------
+        # [Step 1] 영상 프레임 내 채팅 OCR 추출 (PP-OCRv3)
+        # ----------------------------------------------------
+        ocr_csv_path = "extracted_ocr_chats.csv"
+        print("\n▶️ [STEP 1/5] PP-OCRv3 실시간 채팅 추출 시작...")
+        self.ocr_extractor.extract_chat_from_video(
+            video_path=video_path,
+            crop_box=crop_box,
+            sample_rate_sec=1.0,
+            output_csv_path=ocr_csv_path
         )
 
-    # 3. 2단계 Demucs + Whisper + KoBERT 스트리머 발화 정밀 검증
-    print("\n" + "=" * 80)
-    print("🎙️ [STEP 3] 2차 스트리머 발화 정밀 검증 (Demucs + Whisper + KoBERT)")
-    print("=" * 80)
+        # ----------------------------------------------------
+        # [Step 2] KoBERT 7대 감정 정량화 및 시계열 데이터셋 생성
+        # ----------------------------------------------------
+        emotion_csv_path = "video_emotion_timeseries.csv"
+        emotion_json_path = "video_emotion_timeseries.json"
+        print("\n▶️ [STEP 2/5] KoBERT 7대 감정 확률 분석 및 시계열 데이터셋 덤프...")
+        self.emotion_generator.generate_dataset(
+            input_csv_path=ocr_csv_path,
+            output_csv_path=emotion_csv_path,
+            output_json_path=emotion_json_path
+        )
 
-    verified_clips = []
-    for cand in candidates:
-      clip_path = cand.get("clip_path")
-      if not clip_path or not os.path.exists(clip_path):
-        continue
+        # ----------------------------------------------------
+        # [Step 3] 30초 Sliding Window 및 1차 후보 클립 추출
+        # ----------------------------------------------------
+        stage1_json_path = "stage1_candidates.json"
+        print("\n▶️ [STEP 3/5] 30초 Sliding Window 1차 하이라이트 후보 탐지...")
+        detector = WBBSlidingWindowDetector(json_path=emotion_json_path)
+        detector.detect_candidate_windows(
+            window_size=30.0,
+            step_size=5.0,
+            output_json=stage1_json_path
+        )
 
-      stage2_res = self.stage2_engine.analyze_streamer_speech(clip_path)
-      cand["stage2_result"] = stage2_res
+        # ----------------------------------------------------
+        # [Step 4] 2차 정밀 검증 (Whisper STT + 스트리머 발화 감정 분석)
+        # ----------------------------------------------------
+        final_candidates_json = "final_highlight_candidates.json"
+        print("\n▶️ [STEP 4/5] Whisper STT 스트리머 음성 2차 정밀 검증...")
+        self.stage2_refiner.refine_candidates(
+            video_path=video_path,
+            stage1_json=stage1_json_path,
+            output_json=final_candidates_json
+        )
 
-      print(
-          f"🔍 [{os.path.basename(clip_path)}] 발화:"
-          f" \"{stage2_res['speech_text'][:25]}...\" | 감정:"
-          f" {stage2_res['streamer_emotion_name']}"
-      )
+        # ----------------------------------------------------
+        # [Step 5] FFmpeg 무인코딩 영상 클리핑 및 최종 병합
+        # ----------------------------------------------------
+        final_video_path = "final_highlight.mp4"
+        print("\n▶️ [STEP 5/5] FFmpeg 무인코딩 고속 클리핑 및 병합...")
+        self.clipper.video_path = video_path
+        self.clipper.cut_and_merge_highlights(
+            json_path=final_candidates_json,
+            output_video=final_video_path
+        )
 
-      # 2차 검증 통과 여부 확인 (또는 1차 융합 점수가 압도적으로 높은 경우 포함)
-      if stage2_res["is_verified"] or cand["fusion_score"] >= 0.6:
-        verified_clips.append(clip_path)
-        print(f" ➔ ✅ 최종 하이라이트 확정: {os.path.basename(clip_path)}")
-      else:
-        print(f" ➔ ❌ 2차 필터링 탈락: {os.path.basename(clip_path)}")
+        total_elapsed = round(time.time() - start_total_time, 2)
+        print("\n" + "=" * 80)
+        print(f"🎉 [파이프라인 전체 완료] 총 소요 시간: {total_elapsed}초")
+        print(f" 1. 최종 하이라이트 영상 : {final_video_path}")
+        print(f" 2. 시각화용 감정 데이터셋: {emotion_json_path}, {emotion_csv_path}")
+        print(f" 3. 최종 구간 메타데이터  : {final_candidates_json}")
+        print("=" * 80)
 
-    # 만약 엄격한 검증으로 모두 탈락한 경우, 1차 최상위 1개 클립 구출
-    if not verified_clips and clipped_paths:
-      print("⚠️ 2차 검증 통과 클립이 없어 1차 최우수 클립을 선정합니다.")
-      verified_clips.append(clipped_paths[0])
+        return {
+            "status": "success",
+            "elapsed_time_sec": total_elapsed,
+            "final_video": final_video_path,
+            "emotion_timeseries_json": emotion_json_path,
+            "final_candidates_json": final_candidates_json
+        }
 
-    # 4. FFmpeg 최종 하이라이트 영상 병합
-    print("\n" + "=" * 80)
-    print("🎬 [STEP 4] 최종 하이라이트 클립 자동 병합")
-    print("=" * 80)
-
-    final_output = self.clipper.merge_final_clips(
-        clip_paths=verified_clips, output_final_path=output_final_video
-    )
-
-    print(f"\n🎉 [WBB 파이프라인 완결] 최종 요약 영상 생성 완료: {final_output}")
-
-    return {
-        "status": "success",
-        "final_video_path": final_output,
-        "total_windows_analyzed": stage1_summary["total_windows"],
-        "stage1_candidates_count": len(candidates),
-        "final_verified_clips_count": len(verified_clips),
-        "highlight_timeline": candidates,
-    }
-
-
-# 단독 실행 테스트 루틴
 if __name__ == "__main__":
-  pipeline = WBBHighlightMasterPipeline()
-
-  SAMPLE_VIDEO = "./test_sample.mp4"
-
-  # 테스트용 타임스탬프 채팅 데이터
-  sample_chats = [
-      {"timestamp": 5.0, "message": "와 무서워 ㅋㅋ"},
-      {"timestamp": 12.0, "message": "소름 돋네 ㄷㄷ"},
-      {"timestamp": 35.0, "message": "ㅋㅋㅋㅋㅋ 개웃기네"},
-      {"timestamp": 40.0, "message": "대박 사건 ㅋㅋㅋ"},
-      {"timestamp": 75.0, "message": "와 샷 미쳤다 레전드"},
-  ]
-
-  # 전체 마스터 파이프라인 가동
-  result = pipeline.run_full_pipeline(
-      video_path=SAMPLE_VIDEO,
-      chat_logs=sample_chats,
-      output_final_video="./final_highlight.mp4",
-  )
+    pipeline = WBBAutoHighlightPipeline(model_dir="./kobert_wbb_model")
+    pipeline.run_full_pipeline(
+        video_path="./test_sample.mp4",
+        crop_box=(0.15, 0.65, 0.60, 0.98)
+    )
