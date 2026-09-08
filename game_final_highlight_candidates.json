@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "source_video": "test_sample_game.mp4",
+    "top_k_limit": 10,
+    "max_duration_cap_sec": 900.0,
+    "total_highlights_count": 1,
+    "total_highlight_duration_sec": 55.0
+  },
+  "highlights": [
+    {
+      "start_time": 0.0,
+      "end_time": 55.0,
+      "duration": 55.0,
+      "stage1_chat_score": 6.41,
+      "streamer_speech_text": "아이씨 어디서? 사진색 어디서? 사업색 아! 아! 아! 아! 왜 뭐는데? 아... 아, 못하겠습니다 아... 괜찮은데요? 아... 아! 꽃ows multicultural",
+      "streamer_speech_emotion": "중립",
+      "streamer_joy_score": 1.45,
+      "final_highlight_score": 4.92,
+      "rank": 1
+    }
+  ]
+}

@@ -1,36 +1,121 @@
+"""
+=============================================================================
+[와바바(WBB)] 1단계: PP-OCRv3 텍스트 밀도 기반 Auto-ROI 자동 채팅 추출기
+- 담당자: 송태섭 (책임개발자)
+- 핵심 패치: Windows DLL 충돌(WinError 127) 원천 방지를 위한 Import 순서 강제화
+=============================================================================
+"""
+
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+# [핵심 해결] PaddleOCR 내부 albumentations가 torch를 뒤늦게 불러오며 발생하는 
+# DLL 충돌을 막기 위해, 무조건 파일 최상단에서 torch를 먼저 메모리에 적재합니다.
+import torch
+
 import cv2
 import pandas as pd
 import numpy as np
 import logging
-
 from paddleocr import PaddleOCR
 
-# PaddleOCR 내부 로그 최소화
+# PaddleOCR 내부 디버그 로그 숨김
 logging.getLogger("ppocr").setLevel(logging.ERROR)
+
 
 class WBBPPOCRExtractor:
     def __init__(self):
-        print("🚀 [PP-OCRv3] 한국어 문자 인식 모델 로딩 중...")
-        
-        # 안정적인 PaddleOCR 2.10.0 구동 설정
+        print("🚀 [PP-OCRv3] 한국어 문자 인식 엔진 로딩 중...")
         self.ocr = PaddleOCR(
             lang="korean",
             use_angle_cls=True,
             use_gpu=False
         )
-        print("✅ PaddleOCR 모델 로딩 완료")
+        print("✅ [PP-OCRv3] 모델 로딩 완료")
 
-    def extract_chat_from_video(self, video_path: str, crop_box: tuple, sample_rate_sec: float = 1.0, output_csv_path: str = "extracted_ocr_chats.csv"):
+    def detect_chat_roi(self, video_path: str, sample_seconds: list = [2.0, 5.0, 10.0]) -> tuple:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print("⚠️ 영상을 열 수 없어 기본 우측 영역을 사용합니다.")
+            return (0.2, 0.65, 0.95, 0.98)
+
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        boxes_collected = []
+
+        print("🔍 [Auto-ROI] 화면 내 실시간 채팅창 위치 자동 분석 중...")
+
+        for sec in sample_seconds:
+            frame_no = int(sec * fps)
+            if frame_no >= total_frames:
+                continue
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+
+            h, w = frame.shape[:2]
+            results = self.ocr.ocr(frame, det=True, rec=False, cls=False)
+            if results and results[0]:
+                for box in results[0]:
+                    xs = [pt[0] for pt in box]
+                    ys = [pt[1] for pt in box]
+                    xmin, xmax = min(xs) / w, max(xs) / w
+                    ymin, ymax = min(ys) / h, max(ys) / h
+                    boxes_collected.append((xmin, ymin, xmax, ymax))
+
+        cap.release()
+
+        if len(boxes_collected) < 3:
+            print(" ➔ [Auto-ROI] 텍스트 밀집도 부족: 기본 스트리밍 UI(우측 영역)로 설정")
+            return (0.15, 0.65, 0.95, 0.98)
+
+        x_centers = [(b[0] + b[2]) / 2 for b in boxes_collected]
+        left_count = sum(1 for x in x_centers if x < 0.35)
+        mid_count = sum(1 for x in x_centers if 0.35 <= x <= 0.65)
+        right_count = sum(1 for x in x_centers if x > 0.65)
+
+        cluster_boxes = []
+        if right_count >= left_count and right_count >= mid_count:
+            cluster_boxes = [b for b in boxes_collected if (b[0] + b[2]) / 2 > 0.55]
+        elif left_count >= right_count and left_count >= mid_count:
+            cluster_boxes = [b for b in boxes_collected if (b[0] + b[2]) / 2 < 0.45]
+        else:
+            cluster_boxes = [b for b in boxes_collected if 0.30 <= (b[0] + b[2]) / 2 <= 0.70]
+
+        if not cluster_boxes:
+            cluster_boxes = boxes_collected
+
+        auto_xmin = max(0.0, min(b[0] for b in cluster_boxes) - 0.03)
+        auto_xmax = min(1.0, max(b[2] for b in cluster_boxes) + 0.03)
+        auto_ymin = max(0.0, min(b[1] for b in cluster_boxes) - 0.05)
+        auto_ymax = min(1.0, max(b[3] for b in cluster_boxes) + 0.05)
+
+        detected_roi = (round(auto_ymin, 2), round(auto_xmin, 2), round(auto_ymax, 2), round(auto_xmax, 2))
+        print(f"🎯 [Auto-ROI 탐지 성공] 감지된 채팅 영역: Y({detected_roi[0]}~{detected_roi[2]}), X({detected_roi[1]}~{detected_roi[3]})")
+        return detected_roi
+
+    def preprocess_chat_image(self, cropped_bgr: np.ndarray) -> np.ndarray:
+        gray = cv2.cvtColor(cropped_bgr, cv2.COLOR_BGR2GRAY)
+        resized = cv2.resize(gray, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        return clahe.apply(resized)
+
+    def extract_chat_from_video(
+        self, 
+        video_path: str, 
+        crop_box: tuple = None, 
+        sample_rate_sec: float = 2.0, 
+        output_csv_path: str = "extracted_ocr_chats.csv"
+    ):
         if not os.path.exists(video_path):
             print(f"❌ [오류] 영상 파일을 찾을 수 없습니다: {video_path}")
             return []
 
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            print(f"❌ [오류] 영상을 열 수 없습니다: {video_path}")
-            return []
+        if crop_box is None:
+            crop_box = self.detect_chat_roi(video_path)
 
+        cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         if fps <= 0:
             print("❌ [오류] 영상 FPS를 읽을 수 없습니다.")
@@ -41,7 +126,8 @@ class WBBPPOCRExtractor:
         extracted_chats = []
         frame_idx = 0
 
-        print(f"🎬 [OCR 고도화 스캔 시작] 파일: {video_path} (FPS: {fps:.1f})")
+        ymin, xmin, ymax, xmax = crop_box
+        print(f"🎬 [OCR 스캔 시작] 대상: {video_path} (샘플링 주기: {sample_rate_sec}초)")
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -51,83 +137,35 @@ class WBBPPOCRExtractor:
             if frame_idx % frame_interval == 0:
                 current_time_sec = round(frame_idx / fps, 2)
                 h, w = frame.shape[:2]
-                
-                # 1. 좌표 변환 및 안전 범위 처리
-                ymin, xmin, ymax, xmax = crop_box
+
                 crop_y1, crop_y2 = int(h * ymin), int(h * ymax)
                 crop_x1, crop_x2 = int(w * xmin), int(w * xmax)
-
-                crop_y1, crop_y2 = max(0, min(crop_y1, h)), max(0, min(crop_y2, h))
-                crop_x1, crop_x2 = max(0, min(crop_x1, w)), max(0, min(crop_x2, w))
-
-                if crop_y2 <= crop_y1 or crop_x2 <= crop_x1:
-                    frame_idx += 1
-                    continue
 
                 cropped_img = frame[crop_y1:crop_y2, crop_x1:crop_x2]
                 if cropped_img.size == 0:
                     frame_idx += 1
                     continue
 
-                # --------------------------------------------------
-                # [핵심 고도화] OpenCV 고급 전처리 파이프라인
-                # --------------------------------------------------
-                try:
-                    # A. 흑백 변환
-                    gray = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2GRAY)
-                    
-                    # B. 2배 확대 (INTER_CUBIC 보간법으로 폰트 계단 현상 최소화)
-                    resized = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-                    
-                    # C. 적응형 이진화 (Adaptive Thresholding)
-                    # 반투명 채팅창의 배경 명암 변화를 극복하기 위해 주변 픽셀 평균값 기준으로 글자 분리
-                    thresh = cv2.adaptiveThreshold(
-                        resized, 255, 
-                        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                        cv2.THRESH_BINARY, 
-                        11, 2
-                    )
-                    
-                    # D. 형태학적 연산 (Morphology - 노이즈 제거 및 획 굵게 보정)
-                    kernel = np.ones((1, 1), np.uint8)
-                    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-                    processed_img = cv2.dilate(opening, kernel, iterations=1)
+                processed_img = self.preprocess_chat_image(cropped_img)
 
-                except Exception as e:
-                    print(f" ⚠️ [{current_time_sec}초] 전처리 스킵 (오류: {e})")
-                    frame_idx += 1
-                    continue
-
-                # --------------------------------------------------
-                # OCR 실행 및 텍스트 파싱
-                # --------------------------------------------------
                 try:
                     result = self.ocr.ocr(processed_img, cls=True)
-                    
                     if not result or not result[0]:
                         frame_idx += 1
                         continue
 
                     recognized_texts = []
-                    
                     for line in result[0]:
                         if not isinstance(line, list) or len(line) < 2:
                             continue
-                            
                         text_info = line[1]
-                        if not isinstance(text_info, (tuple, list)) or len(text_info) < 2:
-                            continue
-
                         text_content = str(text_info[0]).strip()
-                        
-                        try:
-                            confidence = float(text_info[1])
-                        except (TypeError, ValueError):
-                            continue
+                        confidence = float(text_info[1])
 
-                        # 신뢰도 50% 이상만 유효 텍스트로 인정
-                        if confidence >= 0.5 and text_content:
-                            recognized_texts.append(text_content)
+                        if confidence >= 0.5 and len(text_content) >= 1:
+                            clean_chars = [c for c in text_content if c not in "+-=;_~`|"]
+                            if len(clean_chars) > 0:
+                                recognized_texts.append(text_content)
 
                     if recognized_texts:
                         combined_text = " ".join(recognized_texts)
@@ -138,14 +176,13 @@ class WBBPPOCRExtractor:
                         })
                         print(f" ➔ [{current_time_sec:>6.2f}초] 정밀 OCR 인식: {combined_text}")
 
-                except Exception as e:
-                    print(f" ⚠️ [{current_time_sec}초] 프레임 스킵 (OCR 에러: {e})")
+                except Exception:
+                    pass
 
             frame_idx += 1
 
         cap.release()
 
-        # CSV 파일 저장
         if extracted_chats:
             df = pd.DataFrame(extracted_chats)
             df.to_csv(output_csv_path, index=False, encoding="utf-8-sig")
@@ -154,18 +191,17 @@ class WBBPPOCRExtractor:
             print("=" * 70)
         else:
             print("\n" + "=" * 70)
-            print("⚠️ [경고] 인식된 텍스트가 없습니다. 채팅창 위치(crop_box) 좌표를 다시 확인하세요.")
+            print("⚠️ [경고] 유효한 텍스트가 감지되지 않았습니다.")
             print("=" * 70)
 
         return extracted_chats
 
+
 if __name__ == "__main__":
     extractor = WBBPPOCRExtractor()
-    TEST_VIDEO = "./test_sample.mp4"
-    
     extractor.extract_chat_from_video(
-        video_path=TEST_VIDEO,
-        crop_box=(0.15, 0.65, 0.60, 0.98),
-        sample_rate_sec=1.0,
+        video_path="test_sample_game.mp4",
+        crop_box=None,
+        sample_rate_sec=2.0,
         output_csv_path="extracted_ocr_chats.csv"
     )
