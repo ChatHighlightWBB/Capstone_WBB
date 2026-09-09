@@ -2,9 +2,11 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar.jsx";
 import Hero from "../components/Hero.jsx";
+import RecentHistory from "../components/RecentHistory.jsx";
 import HowItWorks from "../components/HowItWorks.jsx";
 import Features from "../components/Features.jsx";
 import { startAnalysis, startAnalysisFromFile } from "../api.js";
+import { addToHistory } from "../history.js";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -16,6 +18,7 @@ export default function Home() {
     setSubmitting(true);
     try {
       const accepted = await startAnalysis(videoUrl);
+      addToHistory({ videoId: accepted.video_id, label: videoUrl });
       navigate(`/result/${accepted.video_id}`);
     } catch (e) {
       setSubmitting(false);
@@ -28,6 +31,7 @@ export default function Home() {
     setSubmitting(true);
     try {
       const accepted = await startAnalysisFromFile(file);
+      addToHistory({ videoId: accepted.video_id, label: file.name });
       navigate(`/result/${accepted.video_id}`);
     } catch (e) {
       setSubmitting(false);
@@ -44,6 +48,7 @@ export default function Home() {
           <div className="error-banner">⚠️ {error}</div>
         </div>
       )}
+      <RecentHistory />
       <HowItWorks />
       <Features />
     </div>

@@ -1,5 +1,26 @@
 """
 와바바 (WBB) - 통합 백엔드 서버
+=================================================
+[통합 내역]
+- feature/backend 브랜치: FastAPI 뼈대, MongoDB Atlas 연동, CORS, yt-dlp/Streamlink
+  듀얼 파싱 다운로드 로직을 그대로 재사용합니다.
+- feature/ai-nlp 브랜치: 실제 동작하는 5단계 AI 파이프라인
+  (highlight_pipeline.WBBAutoHighlightPipeline)을 그대로 재사용합니다.
+
+[핵심 변경점]
+기존 backend/main.py의 sync_pipeline_core_runner()는 KoBERT/PP-OCRv3/Demucs/Whisper를
+전혀 쓰지 않고 하드코딩된 더미 채팅("와바바","대박","ㅋㅋㅋㅋ")과
+"채팅 0.4 + 오디오 0.3 + 비전 0.3" 고정 가중치로만 결과를 만들어내고 있었습니다.
+
+이 파일은 그 더미 로직을 걷어내고, 실제로 동작이 검증된
+WBBAutoHighlightPipeline.run_full_pipeline()을 호출해서 나온 결과 JSON
+(video_emotion_timeseries.json, final_highlight_candidates.json)을
+그대로 MongoDB에 적재하고 API 응답으로 반환합니다.
+
+미사용 상태였던 backend/ocr_processor.py, fusion_processor.py,
+verification_processor.py, clipping_processor.py는 더 이상 필요하지 않습니다.
+(OCR은 ppocr_chat_extractor.py, Fusion/정제는 sliding_window_nlp.py +
+stage2_refinement.py, 클리핑은 ffmpeg_clipper.py가 이미 대체합니다.)
 """
 
 import os
@@ -7,9 +28,8 @@ import json
 import shutil
 import asyncio
 import subprocess
-import traceback
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import List, Dict, Any, Optional
 
@@ -19,6 +39,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, HttpUrl
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from highlight_pipeline import WBBAutoHighlightPipeline
 
@@ -28,12 +49,17 @@ load_dotenv()
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 DB_NAME = os.getenv("DB_NAME", "wbb_db")
 KOBERT_MODEL_DIR = os.getenv("KOBERT_MODEL_DIR", "./kobert_wbb_model")
-CHAT_CROP_BOX = tuple(
-    float(x) for x in os.getenv("CHAT_CROP_BOX", "0.15,0.65,0.60,0.98").split(",")
-)
+# CHAT_CROP_BOX를 .env에 명시하면 그 고정 좌표를 쓰고, 비워두면(기본값)
+# highlight_pipeline.py의 Auto-ROI가 영상마다 채팅창 위치를 자동으로 탐지합니다.
+_crop_box_env = os.getenv("CHAT_CROP_BOX", "").strip()
+CHAT_CROP_BOX = tuple(float(x) for x in _crop_box_env.split(",")) if _crop_box_env else None
+
+# 로그인 없이 "일시적 내역"만 남기는 정책 — 이 시간이 지난 작업은
+# MongoDB 문서와 outputs/의 mp4 파일이 함께 자동 삭제됩니다.
+RETENTION_HOURS = float(os.getenv("RETENTION_HOURS", "4"))
 
 TEMP_STORAGE_DIR = "temp_storage"
-OUTPUT_DIR = "outputs"
+OUTPUT_DIR = "outputs"  # 최종 하이라이트 영상 및 결과 JSON 보관용 (React가 접근)
 os.makedirs(TEMP_STORAGE_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -44,7 +70,44 @@ class Database:
 
 
 db = Database()
+
+# AI 파이프라인은 모델 로딩 비용이 크므로(KoBERT + PP-OCRv3) 서버 시작 시 1회만 로드합니다.
 pipeline: Optional[WBBAutoHighlightPipeline] = None
+
+scheduler = AsyncIOScheduler()
+
+
+async def cleanup_expired_jobs():
+    """
+    RETENTION_HOURS(기본 4시간)가 지난 작업을 찾아 MongoDB 문서와
+    outputs/의 mp4 파일을 함께 삭제합니다.
+
+    로그인 없이 "일시적으로만 남는 내역"을 구현하기 위한 정리 작업입니다.
+    MongoDB TTL 인덱스만 걸면 문서는 지워지지만 실제 mp4 파일은 그대로
+    남아 디스크가 계속 찰 수 있어서, 문서와 파일을 한 곳에서 같이 지웁니다.
+    """
+    if db.db is None:
+        return
+
+    cutoff = datetime.utcnow() - timedelta(hours=RETENTION_HOURS)
+    expired_cursor = db.db["jobs"].find({"created_at": {"$lt": cutoff}})
+
+    deleted_count = 0
+    async for doc in expired_cursor:
+        video_id = doc.get("video_id")
+
+        final_video_path = os.path.join(OUTPUT_DIR, f"{video_id}_highlight.mp4")
+        if os.path.exists(final_video_path):
+            try:
+                os.remove(final_video_path)
+            except OSError as e:
+                print(f"⚠️ [정리] {final_video_path} 삭제 실패: {e}")
+
+        await db.db["jobs"].delete_one({"_id": doc["_id"]})
+        deleted_count += 1
+
+    if deleted_count:
+        print(f"🧹 [자동 정리] {RETENTION_HOURS}시간 경과한 작업 {deleted_count}건 삭제 완료")
 
 
 @asynccontextmanager
@@ -59,13 +122,21 @@ async def lifespan(app: FastAPI):
         pipeline = WBBAutoHighlightPipeline(model_dir=KOBERT_MODEL_DIR)
         print("✅ [WBB AI] 파이프라인 로딩 완료. 분석 요청을 받을 준비가 되었습니다.")
     except Exception as e:
+        # 모델 파일이 없는 개발 환경에서도 서버 자체는 뜨도록 허용하되,
+        # /api/v1/analyze 호출 시점에 명확한 에러를 반환합니다.
         print(f"⚠️ [WBB AI] 파이프라인 로딩 실패: {e}")
-        traceback.print_exc()
         print(f"   ./{KOBERT_MODEL_DIR} 경로에 파인튜닝된 KoBERT 모델이 있는지 확인하세요.")
         pipeline = None
 
+    # 15분마다 만료된 작업을 확인해서 정리 (4시간 지난 항목이 최대 15분
+    # 늦게 지워질 수 있다는 뜻 — 더 촘촘하게 하려면 minutes 값을 줄이세요)
+    scheduler.add_job(cleanup_expired_jobs, "interval", minutes=15, id="cleanup_expired_jobs")
+    scheduler.start()
+    print(f"🧹 [자동 정리] {RETENTION_HOURS}시간 보관 정책 활성화 (15분마다 확인)")
+
     yield
 
+    scheduler.shutdown(wait=False)
     if db.client:
         db.client.close()
         print("❌ [WBB DB] MongoDB Atlas 연결이 안전하게 해제되었습니다.")
@@ -74,10 +145,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="와바바 (WBB) API 서버",
     description="KoBERT와 PP-OCRv3를 활용한 멀티모달 분석 기반 스트리밍 하이라이트 요약 플랫폼 API",
-    version="2.1.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
+# React 프론트엔드 연동용 CORS 설정
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -86,10 +158,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 최종 하이라이트 mp4를 프론트엔드가 <video src="/files/xxx.mp4">로 바로 재생할 수 있게 정적 서빙
 app.mount("/files", StaticFiles(directory=OUTPUT_DIR), name="files")
 
 
-# --- 1. Pydantic 스키마 ---
+# --- 1. Pydantic 요청/응답 스키마 ---
+# (실제 highlight_pipeline.py가 만들어내는 JSON 구조를 그대로 반영합니다.
+#  이전 버전 스키마(kobert_score/visual_score/librosa_energy 등)는 파이프라인이
+#  실제로 생성하지 않는 필드였으므로 걷어냈습니다.)
 
 class JobStatus(str, Enum):
     QUEUED = "queued"
@@ -168,7 +244,7 @@ class AnalyzeResultResponse(BaseModel):
     final_video_url: Optional[str] = None
 
 
-# --- 2. 플랫폼 자동 감지 및 스트림 다운로드 ---
+# --- 2. 플랫폼 자동 감지 및 스트림 다운로드 (feature/backend 로직 재사용) ---
 
 def detect_platform(url_str: str) -> str:
     if "youtube.com" in url_str or "youtu.be" in url_str:
@@ -181,6 +257,7 @@ def detect_platform(url_str: str) -> str:
 
 
 def build_download_command(platform: str, video_url: str, output_path: str) -> str:
+    """분석 단계는 서버 자원 절약을 위해 저화질(360p 수준)로 다운로드합니다."""
     if platform == "youtube":
         return (
             f'yt-dlp -f "worstvideo[ext=mp4]+worstaudio[ext=m4a]/worst" '
@@ -197,7 +274,7 @@ def build_download_command(platform: str, video_url: str, output_path: str) -> s
     raise ValueError(f"알 수 없는 플랫폼: {platform}")
 
 
-# --- 3. 분석 결과 후처리 공통 함수 (URL 경로 / 업로드 경로가 함께 사용) ---
+# --- 3. 실제 AI 파이프라인 실행 백그라운드 태스크 ---
 
 async def _finalize_success(video_id: str, result_meta: dict):
     """파이프라인 결과 JSON을 읽어 DB에 저장하고 최종 영상을 outputs/로 이동"""
@@ -233,12 +310,11 @@ async def _set_status(video_id: str, status: "JobStatus", **extra):
     )
 
 
-# --- 4. 백그라운드 태스크: URL 분석 (다운로드 + 파이프라인) ---
-
 async def run_analysis_job(video_url: str, platform: str, video_id: str):
     output_path = os.path.join(TEMP_STORAGE_DIR, f"{video_id}_360p.mp4")
 
     try:
+        # Step 0: 스트림 다운로드 (프록시용 저화질)
         await _set_status(video_id, JobStatus.DOWNLOADING)
         command = build_download_command(platform, video_url, output_path)
         loop = asyncio.get_running_loop()
@@ -251,12 +327,16 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str):
         )
         if result.returncode != 0 or not os.path.exists(output_path):
             raise RuntimeError(
-                f"{platform} 스트림 다운로드 실패 (종료 코드 {result.returncode}). "
+                f"{platform} 스트림 다운로드 실패 (yt-dlp/Streamlink 종료 코드 {result.returncode}). "
                 f"stderr: {result.stderr[-500:] if result.stderr else 'N/A'}"
             )
 
+        # Step 1~5: 실제 AI 파이프라인 (OCR → KoBERT → SlidingWindow → Whisper/Demucs → FFmpeg)
         if pipeline is None:
-            raise RuntimeError(f"AI 파이프라인이 로드되지 않았습니다. {KOBERT_MODEL_DIR} 경로를 확인하세요.")
+            raise RuntimeError(
+                f"AI 파이프라인이 로드되지 않았습니다. {KOBERT_MODEL_DIR} 경로의 "
+                f"파인튜닝된 KoBERT 모델을 확인하세요."
+            )
 
         await _set_status(video_id, JobStatus.ANALYZING)
         result_meta = await loop.run_in_executor(
@@ -271,6 +351,7 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str):
         await _set_status(video_id, JobStatus.FAILED, error=str(e))
 
     finally:
+        # 디스크 정리 (원본/360p 임시 파일만 삭제, 결과물은 outputs/에 보존)
         if os.path.exists(output_path):
             try:
                 os.remove(output_path)
@@ -278,12 +359,12 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str):
                 pass
 
 
-# --- 5. 백그라운드 태스크: 업로드 파일 분석 (다운로드 단계 없이 바로 파이프라인) ---
-
 async def run_analysis_job_from_file(video_path: str, video_id: str):
     try:
         if pipeline is None:
-            raise RuntimeError(f"AI 파이프라인이 로드되지 않았습니다. {KOBERT_MODEL_DIR} 경로를 확인하세요.")
+            raise RuntimeError(
+                f"AI 파이프라인이 로드되지 않았습니다. {KOBERT_MODEL_DIR} 경로를 확인하세요."
+            )
 
         await _set_status(video_id, JobStatus.ANALYZING)
         loop = asyncio.get_running_loop()
@@ -306,7 +387,7 @@ async def run_analysis_job_from_file(video_path: str, video_id: str):
                 pass
 
 
-# --- 6. REST API 엔드포인트 ---
+# --- 4. REST API 엔드포인트 ---
 
 @app.get("/")
 def read_root():

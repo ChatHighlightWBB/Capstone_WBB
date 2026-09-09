@@ -38,11 +38,15 @@ class WBBAutoHighlightPipeline:
         self.clipper = WBBFFmpegClipper()
         print("✅ 모든 AI/NLP/Vision 엔진 로딩 완료!\n")
 
-    def run_full_pipeline(self, video_path: str = "./test_sample.mp4", crop_box: tuple = (0.15, 0.65, 0.60, 0.98)) -> dict:
+    def run_full_pipeline(self, video_path: str = "./test_sample.mp4", crop_box: tuple = None) -> dict:
         """
         [설명] 
         영상 경로를 입력받아 Step 1 ~ Step 5 전 과정을 순차 실행하고 
         시각화 데이터셋(JSON/CSV)과 최종 영상 경로를 반환합니다.
+
+        crop_box를 None으로 두면(기본값) Step 1에서 Auto-ROI가 영상마다
+        채팅창 위치를 자동으로 탐지합니다. 특정 방송의 좌표를 이미 알고
+        있어서 자동 탐지를 건너뛰고 싶을 때만 명시적으로 값을 넘기세요.
         """
         start_total_time = time.time()
         
@@ -130,5 +134,5 @@ if __name__ == "__main__":
     pipeline = WBBAutoHighlightPipeline(model_dir="./kobert_wbb_model")
     pipeline.run_full_pipeline(
         video_path="./test_sample.mp4",
-        crop_box=(0.15, 0.65, 0.60, 0.98)
+        crop_box=None  # Auto-ROI가 채팅 영역을 자동으로 탐지합니다.
     )

@@ -21,23 +21,25 @@ const STEPS = [
   },
 ];
 
+// <ol>/<li>를 쓰지 않습니다. 브라우저 기본 번호(1. 2. 3.)가 커스텀 숫자
+// 배지(01, 02...)와 겹쳐 보이는 문제를 원천적으로 막기 위함입니다.
 export default function HowItWorks() {
   return (
     <section id="how" className="how-section">
       <h2>이용 방법</h2>
       <p className="section-sub">네 단계면 끝나요. 회원가입도, 편집도 필요 없어요.</p>
 
-      <ol className="how-steps">
+      <div className="how-steps">
         {STEPS.map((s) => (
-          <li key={s.n} className="how-step">
+          <div key={s.n} className="how-step">
             <span className="how-step-num">{s.n}</span>
-            <div>
+            <div className="how-step-body">
               <h3>{s.title}</h3>
               <p>{s.desc}</p>
             </div>
-          </li>
+          </div>
         ))}
-      </ol>
+      </div>
     </section>
   );
 }

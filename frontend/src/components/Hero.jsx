@@ -1,10 +1,6 @@
 import UploadForm from "./UploadForm.jsx";
-
-const SOURCES = [
-  { label: "유튜브", short: "YT", className: "src-yt" },
-  { label: "치지직", short: "CZ", className: "src-chzzk" },
-  { label: "SOOP", short: "SP", className: "src-soop" },
-];
+import ShortsCarousel from "./ShortsCarousel.jsx";
+import LiveChatDecor from "./LiveChatDecor.jsx";
 
 export default function Hero({ onSubmit, onFileSubmit, disabled }) {
   return (
@@ -21,35 +17,14 @@ export default function Hero({ onSubmit, onFileSubmit, disabled }) {
         </p>
       </div>
 
-      <div className="system-diagram" aria-hidden="true">
-        <div className="diagram-col diagram-sources">
-          {SOURCES.map((s) => (
-            <div key={s.label} className={`source-chip ${s.className}`}>
-              <span className="source-dot" />
-              {s.label}
-            </div>
-          ))}
-        </div>
-
-        <div className="diagram-arrow">→</div>
-
-        <div className="diagram-col">
-          <div className="engine-badge">
-            <span className="engine-mascot">W</span>
-            <span className="engine-label">OCR · KoBERT<br />멀티모달 분석</span>
-          </div>
-        </div>
-
-        <div className="diagram-arrow">→</div>
-
-        <div className="diagram-col diagram-output">
-          <div className="output-clip">🔥 하이라이트 #1</div>
-          <div className="output-clip">✨ 하이라이트 #2</div>
-          <div className="output-clip dim">하이라이트 #3</div>
-        </div>
+      {/* 히어로 중앙 장식: 위쪽엔 짧은 영상이 흘러가는 캐러셀, 아래쪽엔
+          실시간 채팅이 스크롤되는 모습으로 "이 서비스가 다루는 것"을 보여줍니다. */}
+      <div className="hero-visual">
+        <ShortsCarousel />
+        <LiveChatDecor />
       </div>
 
-      <div id="try">
+      <div id="try" className="hero-form-wrap">
         <UploadForm onSubmit={onSubmit} onFileSubmit={onFileSubmit} disabled={disabled} />
       </div>
     </section>
