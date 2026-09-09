@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "source_video": "temp_storage\\wbb_20260909_014649_upload.mp4",
+    "top_k_limit": 10,
+    "max_duration_cap_sec": 900.0,
+    "total_highlights_count": 1,
+    "total_highlight_duration_sec": 70.0
+  },
+  "highlights": [
+    {
+      "start_time": 20.0,
+      "end_time": 90.0,
+      "duration": 70.0,
+      "stage1_chat_score": 43.87,
+      "streamer_speech_text": "아, 괜찮아? 비핑이 오케이? 괜찮아, 다리가 다리받았어 괜찮아 아, 여기서 계속 엘리베이터가 안 열렸구나 왜 이렇게... 아니 혹시 먹어도 돼 어? 바타! 바타, 바타 들어! 아, 바타서 상호장 형이 해야 하는데 어, 가끔",
+      "streamer_speech_emotion": "중립",
+      "streamer_joy_score": 1.55,
+      "final_highlight_score": 31.17,
+      "rank": 1
+    }
+  ]
+}

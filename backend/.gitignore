@@ -1,0 +1,34 @@
+# Python 가상환경 및 캐시
+venv/
+node_modules/
+__pycache__/
+*.pyc
+
+# AI 모델 가중치 및 대용량 체크포인트 (GitHub 100MB 제한 방어)
+kobert_wbb_model/
+*.safetensors
+*.bin
+*.tar
+*.pdparams
+*.pdopt
+*.pdmodel
+.env
+outputs/
+
+# 임시 처리 디렉토리 및 캐시
+temp_storage/
+temp_clips/
+temp_separated/
+.pytest_cache/
+debug_frames/
+
+# 영상 및 오디오 미디어 파일 (구글 드라이브로 공유)
+*.mp4
+*.wav
+*.avi
+*.mkv
+
+# OS 자동 생성 파일
+.DS_Store
+Thumbs.db
+dist/
