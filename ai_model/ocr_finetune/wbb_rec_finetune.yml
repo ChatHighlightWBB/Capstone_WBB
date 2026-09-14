@@ -1,0 +1,133 @@
+# 와바바(WBB) PP-OCRv3 한국어 채팅 인식 파인튜닝 설정
+# 자동 생성됨 - prepare_finetune.py
+Global:
+  use_gpu: true
+  epoch_num: 50
+  log_smooth_window: 20
+  print_batch_step: 20
+  save_model_dir: C:\WBB_Latest\ai_model\ocr_finetune\output\wbb_rec
+  save_epoch_step: 5
+  eval_batch_step: [0, 500]
+  cal_metric_during_train: true
+  # 사전학습 가중치: 한국어 PP-OCRv3 인식 모델에서 이어서 학습합니다.
+  pretrained_model: C:\WBB_Latest\ai_model\ocr_finetune\pretrain\korean_PP-OCRv3_rec_train\best_accuracy
+  checkpoints:
+  save_inference_dir:
+  use_visualdl: false
+  infer_img:
+  character_dict_path: C:\WBB_Latest\ai_model\ocr_finetune\wbb_chat_dict.txt
+  max_text_length: 40
+  infer_mode: false
+  use_space_char: true
+  distributed: false
+  save_res_path: ./output/wbb_rec/predicts.txt
+
+Optimizer:
+  name: Adam
+  beta1: 0.9
+  beta2: 0.999
+  lr:
+    name: Cosine
+    # 파인튜닝이므로 처음부터 학습할 때보다 낮은 학습률을 씁니다.
+    learning_rate: 0.0005
+    warmup_epoch: 2
+  regularizer:
+    name: L2
+    factor: 3.0e-05
+
+Architecture:
+  model_type: rec
+  algorithm: SVTR_LCNet
+  Transform:
+  Backbone:
+    name: MobileNetV1Enhance
+    scale: 0.5
+    last_conv_stride: [1, 2]
+    last_pool_type: avg
+  Head:
+    name: MultiHead
+    head_list:
+      - CTCHead:
+          Neck:
+            name: svtr
+            dims: 64
+            depth: 2
+            hidden_dims: 120
+            use_guide: true
+          Head:
+            fc_decay: 0.00001
+      - SARHead:
+          enc_dim: 512
+          max_text_length: 40
+
+Loss:
+  name: MultiLoss
+  loss_config_list:
+    - CTCLoss:
+    - SARLoss:
+
+PostProcess:
+  name: CTCLabelDecode
+
+Metric:
+  name: RecMetric
+  main_indicator: acc
+  ignore_space: false
+
+Train:
+  dataset:
+    name: SimpleDataSet
+    data_dir: C:\WBB_Latest\ai_model\ocr_finetune\ocr_dataset
+    ext_op_transform_idx: 1
+    label_file_list:
+      - C:\WBB_Latest\ai_model\ocr_finetune\ocr_dataset\train_label.txt
+    transforms:
+      - DecodeImage:
+          img_mode: BGR
+          channel_first: false
+      - RecConAug:
+          prob: 0.5
+          ext_data_num: 2
+          image_shape: [48, 320, 3]
+      - RecAug:
+      - MultiLabelEncode:
+      - RecResizeImg:
+          image_shape: [3, 48, 320]
+      - KeepKeys:
+          keep_keys:
+            - image
+            - label_ctc
+            - label_sar
+            - length
+            - valid_ratio
+  loader:
+    shuffle: true
+    batch_size_per_card: 16
+    drop_last: true
+    num_workers: 4
+
+Eval:
+  dataset:
+    name: SimpleDataSet
+    data_dir: C:\WBB_Latest\ai_model\ocr_finetune\ocr_dataset
+    label_file_list:
+      - C:\WBB_Latest\ai_model\ocr_finetune\ocr_dataset\val_label.txt
+    transforms:
+      - DecodeImage:
+          img_mode: BGR
+          channel_first: false
+      - MultiLabelEncode:
+      - RecResizeImg:
+          image_shape: [3, 48, 320]
+      - KeepKeys:
+          keep_keys:
+            - image
+            - label_ctc
+            - label_sar
+            - length
+            - valid_ratio
+  loader:
+    shuffle: false
+    drop_last: false
+    batch_size_per_card: 16
+    num_workers: 2
