@@ -1,0 +1,4 @@
+*.log
+ai_model/
+inference/
+test_sample.mp4
