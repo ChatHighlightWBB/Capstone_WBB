@@ -53,11 +53,10 @@ class WBBPPOCRExtractor:
 
         self.ocr = PaddleOCR(
             lang="korean",
+            text_recognition_model_dir="../inference/wbb_rec",
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
-            det_db_unclip_ratio=2.0,
-            det_db_box_thresh=0.5,
         )
         print("✅ PaddleOCR 모델 로딩 완료")
 
@@ -145,7 +144,7 @@ class WBBPPOCRExtractor:
         gray = cv2.cvtColor(cropped_bgr, cv2.COLOR_BGR2GRAY)
         resized = cv2.resize(gray, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        return clahe.apply(resized)
+        return cv2.cvtColor(clahe.apply(resized), cv2.COLOR_GRAY2BGR)
 
     def extract_chat_from_video(
         self,

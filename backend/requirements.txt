@@ -1,6 +1,7 @@
 annotated-doc
 annotated-types
 anyio
+apscheduler
 attrs
 certifi
 cffi
@@ -32,8 +33,11 @@ motor
 mpmath
 networkx
 numpy
+opencv-python
 outcome
 packaging
+paddleocr
+paddlepaddle
 pandas
 protobuf
 pycountry
@@ -46,6 +50,7 @@ PySocks
 pytchat
 python-dateutil
 python-dotenv
+python-multipart
 pytz
 PyYAML
 regex

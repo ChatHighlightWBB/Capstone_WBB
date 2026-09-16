@@ -1,0 +1,8 @@
+*.log
+*.mp4
+ai_model/ocr_finetune/ocr_dataset/
+ai_model/ocr_finetune/output/
+ai_model/ocr_finetune/pretrain/
+ai_model/ocr_finetune_old_broken/
+inference/wbb_rec_old_broken/
+inference/wbb_rec/ppocr_keys.txt
