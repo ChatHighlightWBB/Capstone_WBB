@@ -74,6 +74,13 @@ db = Database()
 # AI 파이프라인은 모델 로딩 비용이 크므로(KoBERT + PP-OCRv3) 서버 시작 시 1회만 로드합니다.
 pipeline: Optional[WBBAutoHighlightPipeline] = None
 
+# video_id -> {"step": int, "total_steps": int, "label": str}
+# 파이프라인은 백그라운드 스레드에서 동기적으로 도는데, 그 안에서 매번
+# MongoDB(비동기)를 갱신하긴 번거로워서 간단한 메모리 딕셔너리로 실시간
+# 진행 상황만 별도로 들고 있습니다. (서버 재시작하면 사라지지만, 어차피
+# 진행 중이던 작업도 재시작하면 이어지지 않으므로 문제 없음)
+PROGRESS: Dict[str, Dict[str, Any]] = {}
+
 scheduler = AsyncIOScheduler()
 
 
@@ -191,6 +198,9 @@ class VideoInfo(BaseModel):
     status: JobStatus
     elapsed_time_sec: Optional[float] = None
     error: Optional[str] = None
+    step: Optional[int] = None
+    total_steps: Optional[int] = None
+    step_label: Optional[str] = None
 
 
 class EmotionTimePoint(BaseModel):
@@ -222,6 +232,7 @@ class HighlightItem(BaseModel):
     streamer_speech_emotion: str
     streamer_joy_score: float
     final_highlight_score: float
+    clip_url: Optional[str] = None
 
 
 class HighlightMetadata(BaseModel):
@@ -251,26 +262,35 @@ def detect_platform(url_str: str) -> str:
         return "youtube"
     if "chzzk.naver.com" in url_str:
         return "chzzk"
-    if "sooplive.co.kr" in url_str or "afreecatv.com" in url_str:
+    if "sooplive.co.kr" in url_str or "sooplive.com" in url_str or "afreecatv.com" in url_str:
         return "soop"
     raise HTTPException(status_code=400, detail="지원하지 않는 영상 플랫폼 URL입니다.")
 
 
 def build_download_command(platform: str, video_url: str, output_path: str) -> str:
-    """분석 단계는 서버 자원 절약을 위해 저화질(360p 수준)로 다운로드합니다."""
+    """
+    분석용으로 지나치게 고화질을 받을 필요는 없지만, 'worst'는 채팅 글씨가
+    안 보일 정도로 낮아서 480p 캡 정도로 절충합니다.
+    """
     if platform == "youtube":
+        # [수정] android 클라이언트는 GVS(영상 스트림)에 PO Token을 요구해서
+        # 360p(format 18) 초과 화질을 받으려 하면 조용히 실패합니다.
+        # (yt-dlp 공식 PO Token 가이드: android=GVS/Player 필요, android_vr=불필요)
+        # android_vr로 바꾸면 PO Token 없이 더 높은 화질까지 받을 수 있습니다.
+        # 단, "아동용" 표시가 된 영상은 android_vr에서 제외되니 그런 영상은
+        # 실패할 수 있습니다 — 이 경우 파일 업로드로 우회하세요.
         return (
-            f'yt-dlp -f "worstvideo[ext=mp4]+worstaudio[ext=m4a]/worst" '
-            f'--extractor-args "youtube:player_client=android" '
+            f'yt-dlp -f "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]" '
+            f'--extractor-args "youtube:player_client=android_vr" '
             f'--no-check-certificates --no-mtime -o "{output_path}" "{video_url}"'
         )
     if platform == "chzzk":
         return (
-            f'yt-dlp -f "worst" --no-check-certificates --no-mtime '
+            f'yt-dlp -f "best[height<=480]/worst" --no-check-certificates --no-mtime '
             f'--extractor-args "chzzk:no_api=true" -o "{output_path}" "{video_url}"'
         )
     if platform == "soop":
-        return f'streamlink "{video_url}" worst -o "{output_path}"'
+        return f'streamlink "{video_url}" "480p,best" -o "{output_path}"'
     raise ValueError(f"알 수 없는 플랫폼: {platform}")
 
 
@@ -286,6 +306,21 @@ async def _finalize_success(video_id: str, result_meta: dict):
     final_video_dest = os.path.join(OUTPUT_DIR, f"{video_id}_highlight.mp4")
     if os.path.exists(result_meta["final_video"]):
         shutil.move(result_meta["final_video"], final_video_dest)
+
+    # [추가] 병합 영상 말고, 하이라이트별 개별 클립도 outputs/로 옮겨서
+    # 각각 따로 재생할 수 있게 clip_url을 붙입니다. highlight_clips 리스트는
+    # final_candidates_json의 "highlights" 배열과 같은 순서로 만들어집니다.
+    clip_paths = result_meta.get("highlight_clips", [])
+    highlights_list = highlight_result.get("highlights", [])
+    for idx, clip_src in enumerate(clip_paths):
+        if idx >= len(highlights_list):
+            break
+        if not os.path.exists(clip_src):
+            continue
+        rank = highlights_list[idx].get("rank", idx + 1)
+        clip_dest = os.path.join(OUTPUT_DIR, f"{video_id}_highlight_{rank}.mp4")
+        shutil.move(clip_src, clip_dest)
+        highlights_list[idx]["clip_url"] = f"/files/{video_id}_highlight_{rank}.mp4"
 
     await db.db["jobs"].update_one(
         {"video_id": video_id},
@@ -318,16 +353,31 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str):
         await _set_status(video_id, JobStatus.DOWNLOADING)
         command = build_download_command(platform, video_url, output_path)
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: subprocess.run(
-                command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, errors="replace",
-            ),
-        )
+
+        # [추가] 재시도 로직: 특히 CHZZK는 "재인코딩 중", API 일시 오류 등으로
+        # 첫 시도에 실패해도 몇 초 뒤 재시도하면 성공하는 경우가 흔합니다.
+        MAX_DOWNLOAD_RETRIES = 3
+        result = None
+        for attempt in range(1, MAX_DOWNLOAD_RETRIES + 1):
+            result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, errors="replace",
+                ),
+            )
+            if result.returncode == 0 and os.path.exists(output_path):
+                break
+            print(f"⚠️ [{video_id}] 다운로드 시도 {attempt}/{MAX_DOWNLOAD_RETRIES} 실패 "
+                  f"(종료 코드 {result.returncode}). "
+                  f"{'재시도합니다...' if attempt < MAX_DOWNLOAD_RETRIES else '포기합니다.'}")
+            if attempt < MAX_DOWNLOAD_RETRIES:
+                await asyncio.sleep(5 * attempt)  # 5초, 10초 간격으로 점점 늘려가며 재시도
+
         if result.returncode != 0 or not os.path.exists(output_path):
             raise RuntimeError(
-                f"{platform} 스트림 다운로드 실패 (yt-dlp/Streamlink 종료 코드 {result.returncode}). "
+                f"{platform} 스트림 다운로드 실패 ({MAX_DOWNLOAD_RETRIES}회 시도, "
+                f"마지막 종료 코드 {result.returncode}). "
                 f"stderr: {result.stderr[-500:] if result.stderr else 'N/A'}"
             )
 
@@ -339,9 +389,15 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str):
             )
 
         await _set_status(video_id, JobStatus.ANALYZING)
+
+        def _on_progress(step: int, label: str):
+            PROGRESS[video_id] = {"step": step, "total_steps": 5, "label": label}
+
         result_meta = await loop.run_in_executor(
             None,
-            lambda: pipeline.run_full_pipeline(video_path=output_path, crop_box=CHAT_CROP_BOX),
+            lambda: pipeline.run_full_pipeline(
+                video_path=output_path, crop_box=CHAT_CROP_BOX, on_progress=_on_progress
+            ),
         )
 
         await _finalize_success(video_id, result_meta)
@@ -351,6 +407,7 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str):
         await _set_status(video_id, JobStatus.FAILED, error=str(e))
 
     finally:
+        PROGRESS.pop(video_id, None)
         # 디스크 정리 (원본/360p 임시 파일만 삭제, 결과물은 outputs/에 보존)
         if os.path.exists(output_path):
             try:
@@ -368,9 +425,15 @@ async def run_analysis_job_from_file(video_path: str, video_id: str):
 
         await _set_status(video_id, JobStatus.ANALYZING)
         loop = asyncio.get_running_loop()
+
+        def _on_progress(step: int, label: str):
+            PROGRESS[video_id] = {"step": step, "total_steps": 5, "label": label}
+
         result_meta = await loop.run_in_executor(
             None,
-            lambda: pipeline.run_full_pipeline(video_path=video_path, crop_box=CHAT_CROP_BOX),
+            lambda: pipeline.run_full_pipeline(
+                video_path=video_path, crop_box=CHAT_CROP_BOX, on_progress=_on_progress
+            ),
         )
 
         await _finalize_success(video_id, result_meta)
@@ -380,6 +443,7 @@ async def run_analysis_job_from_file(video_path: str, video_id: str):
         await _set_status(video_id, JobStatus.FAILED, error=str(e))
 
     finally:
+        PROGRESS.pop(video_id, None)
         if os.path.exists(video_path):
             try:
                 os.remove(video_path)
@@ -458,6 +522,8 @@ async def get_analysis_result(video_id: str):
     if not doc:
         raise HTTPException(status_code=404, detail="존재하지 않는 video_id 입니다.")
 
+    progress = PROGRESS.get(video_id)
+
     return AnalyzeResultResponse(
         video_info=VideoInfo(
             video_id=doc["video_id"],
@@ -465,6 +531,9 @@ async def get_analysis_result(video_id: str):
             status=doc["status"],
             elapsed_time_sec=doc.get("elapsed_time_sec"),
             error=doc.get("error"),
+            step=progress["step"] if progress else None,
+            total_steps=progress["total_steps"] if progress else None,
+            step_label=progress["label"] if progress else None,
         ),
         emotion_timeseries=doc.get("emotion_timeseries"),
         highlight_result=doc.get("highlight_result"),

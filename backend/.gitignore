@@ -33,3 +33,7 @@ debug_*.png
 .DS_Store
 Thumbs.db
 dist/
+
+# 로컬 임시 작업 파일
+server.py.backup
+server_new.py
