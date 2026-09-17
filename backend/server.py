@@ -273,15 +273,12 @@ def build_download_command(platform: str, video_url: str, output_path: str) -> s
     안 보일 정도로 낮아서 480p 캡 정도로 절충합니다.
     """
     if platform == "youtube":
-        # [수정] android 클라이언트는 GVS(영상 스트림)에 PO Token을 요구해서
-        # 360p(format 18) 초과 화질을 받으려 하면 조용히 실패합니다.
-        # (yt-dlp 공식 PO Token 가이드: android=GVS/Player 필요, android_vr=불필요)
-        # android_vr로 바꾸면 PO Token 없이 더 높은 화질까지 받을 수 있습니다.
-        # 단, "아동용" 표시가 된 영상은 android_vr에서 제외되니 그런 영상은
-        # 실패할 수 있습니다 — 이 경우 파일 업로드로 우회하세요.
+        # [수정] android_vr 클라이언트는 PO Token 없이 포맷 목록까지는 가져오지만
+        # 실제 다운로드 요청에서 HTTP 403으로 막히는 것을 확인해 480p 시도를 포기했습니다.
+        # android 클라이언트는 PO Token 없이 360p(format 18)까지만 안정적으로 받아집니다.
         return (
             f'yt-dlp -f "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]" '
-            f'--extractor-args "youtube:player_client=android_vr" '
+            f'--extractor-args "youtube:player_client=android" '
             f'--no-check-certificates --no-mtime -o "{output_path}" "{video_url}"'
         )
     if platform == "chzzk":
