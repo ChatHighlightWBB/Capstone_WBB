@@ -50,7 +50,7 @@
 
 ## 프로젝트 구조
 
-Capstone_WBB/
+<pre> ```Capstone_WBB/
 ├── backend/
 │ ├── server.py # FastAPI 서버, API 엔드포인트
 │ ├── highlight_pipeline.py # 5단계 파이프라인 오케스트레이션
@@ -66,7 +66,7 @@ Capstone_WBB/
 └── frontend/
 └── src/
 ├── pages/ # Home, Result, Settings
-└── components/ # Sidebar, Topbar, EmotionChart, HighlightCard 등
+└── components/ # Sidebar, Topbar, EmotionChart, HighlightCard 등 ``` </pre>
 
 
 ## 시작하기
