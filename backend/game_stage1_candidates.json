@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "source_video_duration": 70.0,
+    "applied_threshold": 4.18,
+    "total_candidates": 1
+  },
+  "candidate_clips": [
+    {
+      "start_time": 0.0,
+      "end_time": 55.0,
+      "duration": 55.0,
+      "window_score": 6.41,
+      "avg_joy": 4.47,
+      "chat_count": 33
+    }
+  ]
+}

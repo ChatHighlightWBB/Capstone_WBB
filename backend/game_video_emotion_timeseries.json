@@ -1,0 +1,242 @@
+{
+  "video_metadata": {
+    "duration_sec": 70.0,
+    "total_chats_analyzed": 19,
+    "source_video_path": "test_sample_game.mp4"
+  },
+  "adaptive_threshold_stats": {
+    "calculated_threshold": 4.18,
+    "mean_joy": 3.23,
+    "std_joy": 1.91
+  },
+  "time_series_data": [
+    {
+      "timestamp": 0.0,
+      "chat_text": "234 6/8/9 양까라호연 200 174/12 8150곧드 20 5/3/21",
+      "top_emotion": "중립",
+      "joy_pct": 2.19,
+      "embarrass_pct": 2.82,
+      "anger_pct": 6.55,
+      "anxiety_pct": 2.49,
+      "hurt_pct": 4.08,
+      "sadness_pct": 3.64,
+      "neutral_pct": 78.23
+    },
+    {
+      "timestamp": 1.0,
+      "chat_text": "tttfl! [|",
+      "top_emotion": "중립",
+      "joy_pct": 5.12,
+      "embarrass_pct": 4.87,
+      "anger_pct": 5.14,
+      "anxiety_pct": 4.15,
+      "hurt_pct": 2.47,
+      "sadness_pct": 5.7,
+      "neutral_pct": 72.55
+    },
+    {
+      "timestamp": 10.0,
+      "chat_text": "234 6/8/9 150골드 8 212 17[4/13 고라니 8200곧드 사냥꾼3 5/522 [[!]",
+      "top_emotion": "중립",
+      "joy_pct": 2.09,
+      "embarrass_pct": 4.47,
+      "anger_pct": 9.58,
+      "anxiety_pct": 2.2,
+      "hurt_pct": 5.93,
+      "sadness_pct": 3.35,
+      "neutral_pct": 72.37
+    },
+    {
+      "timestamp": 21.0,
+      "chat_text": "-",
+      "top_emotion": "중립",
+      "joy_pct": 4.23,
+      "embarrass_pct": 20.56,
+      "anger_pct": 5.18,
+      "anxiety_pct": 13.77,
+      "hurt_pct": 3.88,
+      "sadness_pct": 18.46,
+      "neutral_pct": 33.93
+    },
+    {
+      "timestamp": 25.0,
+      "chat_text": "Ei",
+      "top_emotion": "중립",
+      "joy_pct": 3.32,
+      "embarrass_pct": 4.45,
+      "anger_pct": 4.86,
+      "anxiety_pct": 4.57,
+      "hurt_pct": 2.68,
+      "sadness_pct": 5.64,
+      "neutral_pct": 74.49
+    },
+    {
+      "timestamp": 28.0,
+      "chat_text": "가보!\"",
+      "top_emotion": "중립",
+      "joy_pct": 9.89,
+      "embarrass_pct": 9.92,
+      "anger_pct": 12.6,
+      "anxiety_pct": 5.6,
+      "hurt_pct": 10.5,
+      "sadness_pct": 6.6,
+      "neutral_pct": 44.9
+    },
+    {
+      "timestamp": 41.0,
+      "chat_text": "-- Ett----- \"_+- :+I;--",
+      "top_emotion": "중립",
+      "joy_pct": 3.23,
+      "embarrass_pct": 3.89,
+      "anger_pct": 4.98,
+      "anxiety_pct": 3.92,
+      "hurt_pct": 2.68,
+      "sadness_pct": 5.21,
+      "neutral_pct": 76.08
+    },
+    {
+      "timestamp": 42.0,
+      "chat_text": "'-+:",
+      "top_emotion": "중립",
+      "joy_pct": 3.92,
+      "embarrass_pct": 5.0,
+      "anger_pct": 4.87,
+      "anxiety_pct": 4.59,
+      "hurt_pct": 2.48,
+      "sadness_pct": 5.82,
+      "neutral_pct": 73.32
+    },
+    {
+      "timestamp": 46.0,
+      "chat_text": "++++++ ++++!",
+      "top_emotion": "중립",
+      "joy_pct": 2.38,
+      "embarrass_pct": 5.59,
+      "anger_pct": 7.4,
+      "anxiety_pct": 2.82,
+      "hurt_pct": 3.49,
+      "sadness_pct": 4.12,
+      "neutral_pct": 74.2
+    },
+    {
+      "timestamp": 51.0,
+      "chat_text": "S+ay-+++ +++ +- --+-",
+      "top_emotion": "중립",
+      "joy_pct": 3.49,
+      "embarrass_pct": 3.35,
+      "anger_pct": 5.72,
+      "anxiety_pct": 2.74,
+      "hurt_pct": 2.97,
+      "sadness_pct": 4.09,
+      "neutral_pct": 77.63
+    },
+    {
+      "timestamp": 52.0,
+      "chat_text": "++",
+      "top_emotion": "중립",
+      "joy_pct": 4.0,
+      "embarrass_pct": 4.83,
+      "anger_pct": 4.83,
+      "anxiety_pct": 4.88,
+      "hurt_pct": 2.58,
+      "sadness_pct": 5.76,
+      "neutral_pct": 73.11
+    },
+    {
+      "timestamp": 54.0,
+      "chat_text": ":+++",
+      "top_emotion": "중립",
+      "joy_pct": 3.37,
+      "embarrass_pct": 3.76,
+      "anger_pct": 5.16,
+      "anxiety_pct": 3.29,
+      "hurt_pct": 2.73,
+      "sadness_pct": 4.59,
+      "neutral_pct": 77.11
+    },
+    {
+      "timestamp": 57.0,
+      "chat_text": "+++++++y wuais",
+      "top_emotion": "중립",
+      "joy_pct": 3.31,
+      "embarrass_pct": 3.55,
+      "anger_pct": 5.17,
+      "anxiety_pct": 3.26,
+      "hurt_pct": 2.73,
+      "sadness_pct": 4.6,
+      "neutral_pct": 77.37
+    },
+    {
+      "timestamp": 59.0,
+      "chat_text": "편고",
+      "top_emotion": "중립",
+      "joy_pct": 1.31,
+      "embarrass_pct": 4.16,
+      "anger_pct": 6.6,
+      "anxiety_pct": 6.01,
+      "hurt_pct": 6.03,
+      "sadness_pct": 6.0,
+      "neutral_pct": 69.89
+    },
+    {
+      "timestamp": 62.0,
+      "chat_text": "Tuf P니 R-iw !-",
+      "top_emotion": "중립",
+      "joy_pct": 3.14,
+      "embarrass_pct": 6.34,
+      "anger_pct": 9.38,
+      "anxiety_pct": 2.82,
+      "hurt_pct": 4.53,
+      "sadness_pct": 5.01,
+      "neutral_pct": 68.79
+    },
+    {
+      "timestamp": 66.0,
+      "chat_text": "것랐다",
+      "top_emotion": "중립",
+      "joy_pct": 2.64,
+      "embarrass_pct": 4.8,
+      "anger_pct": 4.94,
+      "anxiety_pct": 5.82,
+      "hurt_pct": 3.21,
+      "sadness_pct": 5.97,
+      "neutral_pct": 72.62
+    },
+    {
+      "timestamp": 67.0,
+      "chat_text": "크 하실 때 진짜",
+      "top_emotion": "중립",
+      "joy_pct": 1.39,
+      "embarrass_pct": 4.19,
+      "anger_pct": 13.26,
+      "anxiety_pct": 6.78,
+      "hurt_pct": 24.65,
+      "sadness_pct": 6.01,
+      "neutral_pct": 43.72
+    },
+    {
+      "timestamp": 68.0,
+      "chat_text": "하실 때 진짜 -",
+      "top_emotion": "중립",
+      "joy_pct": 1.13,
+      "embarrass_pct": 5.42,
+      "anger_pct": 10.94,
+      "anxiety_pct": 11.73,
+      "hurt_pct": 17.17,
+      "sadness_pct": 9.47,
+      "neutral_pct": 44.15
+    },
+    {
+      "timestamp": 69.0,
+      "chat_text": "실때 진짜",
+      "top_emotion": "중립",
+      "joy_pct": 1.14,
+      "embarrass_pct": 5.55,
+      "anger_pct": 10.97,
+      "anxiety_pct": 12.0,
+      "hurt_pct": 17.72,
+      "sadness_pct": 9.6,
+      "neutral_pct": 43.02
+    }
+  ]
+}

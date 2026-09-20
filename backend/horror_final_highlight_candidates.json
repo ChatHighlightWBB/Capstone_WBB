@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "source_video": "test_sample_horror.mp4",
+    "top_k_limit": 10,
+    "max_duration_cap_sec": 900.0,
+    "total_highlights_count": 2,
+    "total_highlight_duration_sec": 130.0
+  },
+  "highlights": [
+    {
+      "start_time": 20.0,
+      "end_time": 80.0,
+      "duration": 60.0,
+      "stage1_chat_score": 44.97,
+      "streamer_speech_text": "아.. 아.. 아.. 아.. 아.. 아.. 아.. 아.. 아.. 아.. 아.. 아.. 아.. 아.. 아.. 괜찮아? 괜찮아 비핑이 오케이? 괜찮아 다리가 다리 빠졌어 괜찮아 아.. 왜 그래서 엘리베이터가 안 열렸구나 아.. 왜.. 아니 혹시 뭐.. 어? 맞다 맞다 맞다 맞다 상호장 형이 안 돼 그래",
+      "streamer_speech_emotion": "중립",
+      "streamer_joy_score": 1.4,
+      "final_highlight_score": 31.9,
+      "rank": 1
+    },
+    {
+      "start_time": 85.0,
+      "end_time": 155.0,
+      "duration": 70.0,
+      "stage1_chat_score": 40.28,
+      "streamer_speech_text": "오우오<|az|> 침대가 오지 accepted 침대 엄마 Х�비 뭐했다고 침대가 오지 Well 침대가 오지 Surprise 와 오징어 오징어가 안녕 손이구나 저 봐야 되는 거야? 예! 나이스! 어, 감사합니다 힌가 되네 네! 그러면 전환이 너 포뇌쇠인데 저지는 없지? 네 알겠습니다 아!",
+      "streamer_speech_emotion": "중립",
+      "streamer_joy_score": 1.28,
+      "final_highlight_score": 28.58,
+      "rank": 2
+    }
+  ]
+}

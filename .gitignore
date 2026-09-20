@@ -1,0 +1,37 @@
+# 가상환경
+backend/venv/
+venv/
+
+# 프론트엔드 의존성/빌드 결과물
+frontend/node_modules/
+frontend/dist/
+
+# 무거운 모델 파일
+backend/kobert_wbb_model/
+backend/models/
+
+# 실행 중 생기는 임시/결과 파일
+backend/temp_storage/
+backend/outputs/
+backend/temp_clips/
+backend/temp_separated/
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# 환경변수 (민감 정보 포함 가능)
+.env
+
+# OS/에디터
+.DS_Store
+.vscode/
+
+# 매 분석마다 자동 생성되는 기본 결과 파일 (재현 가능, git에 안 올려도 됨)
+backend/extracted_ocr_chats.csv
+backend/video_emotion_timeseries.csv
+backend/video_emotion_timeseries.json
+backend/stage1_candidates.csv
+backend/stage1_candidates.json
+backend/final_highlight_candidates.csv
+backend/final_highlight_candidates.json
