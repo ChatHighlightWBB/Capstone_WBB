@@ -1,18 +1,84 @@
-python -c "
-with open('requirements.txt', encoding='utf-8') as f:
-    lines = f.readlines()
-
-new_lines = []
-for line in lines:
-    line = line.strip()
-    if '==' in line:
-        pkg = line.split('==')[0]
-        new_lines.append(pkg)
-    elif line:
-        new_lines.append(line)
-
-with open('requirements.txt', 'w', encoding='utf-8') as f:
-    f.write('\n'.join(new_lines) + '\n')
-
-print('완료: 모든 버전 고정 제거')
-"
+annotated-doc
+annotated-types
+anyio
+apscheduler
+attrs
+certifi
+cffi
+charset-normalizer
+chat-downloader==0.2.8
+click
+colorama
+colorlog
+dnspython
+docstring_parser
+exceptiongroup
+fastapi==0.128.8
+filelock
+fsspec
+h11
+h2
+hpack
+httpcore
+httpx
+huggingface_hub
+hyperframe
+idna
+isodate
+Jinja2
+joblib
+lxml
+MarkupSafe
+motor==3.7.1
+mpmath
+networkx
+numpy==2.0.2
+opencv-python==5.0.0.93
+outcome
+packaging
+paddleocr==3.7.0
+pandas==2.3.3
+protobuf
+pycountry
+pycparser
+pycryptodome
+pydantic==2.13.5
+pydantic_core
+pymongo==4.18.1
+PySocks
+pytchat==0.5.5
+python-dateutil
+python-dotenv
+python-multipart
+pytz
+PyYAML
+regex
+requests
+sacremoses==0.2.0
+safetensors
+scikit-learn==1.6.1
+scipy==1.13.1
+selenium==4.36.0
+sentencepiece==0.2.2
+six
+sniffio
+sortedcontainers
+starlette
+streamlink==7.6.0
+sympy
+threadpoolctl
+tokenizers==0.22.2
+torch==2.8.0
+tqdm
+transformers==4.57.6
+trio
+trio-websocket
+typing-inspection
+typing_extensions
+tzdata
+urllib3
+uvicorn==0.39.0
+websocket-client
+wsproto
+yt-dlp==2025.10.14
+openai-whisper==20250625

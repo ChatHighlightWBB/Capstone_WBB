@@ -82,14 +82,18 @@ class WBBEmotionDatasetGenerator:
     def __init__(self, model_dir: str = "./kobert_wbb_model"):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.labels = ['기쁨', '당황', '분노', '불안', '상처', '슬픔', '중립']
-        
-        try:
-            from tokenization_kobert import KoBERTTokenizer
-            self.tokenizer = KoBERTTokenizer.from_pretrained(model_dir)
-        except Exception:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-            
-        self.model = AutoModelForSequenceClassification.from_pretrained(model_dir, num_labels=7)
+
+        if os.path.exists(model_dir) and os.path.isdir(model_dir):
+            try:
+                from tokenization_kobert import KoBERTTokenizer
+                self.tokenizer = KoBERTTokenizer.from_pretrained(model_dir)
+            except Exception:
+                self.tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
+            self.model = AutoModelForSequenceClassification.from_pretrained(model_dir, num_labels=7)
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained("skt/kobert-base-v1", trust_remote_code=True)
+            self.model = AutoModelForSequenceClassification.from_pretrained("skt/kobert-base-v1", num_labels=7)
+
         self.model.to(self.device)
         self.model.eval()
 

@@ -25,18 +25,18 @@ class WBBStage2Refinement:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.emotion_labels = ["기쁨", "당황", "분노", "불안", "상처", "슬픔", "중립"]
 
-        try:
-            from tokenization_kobert import KoBERTTokenizer
-            self.tokenizer = KoBERTTokenizer.from_pretrained(model_dir)
-        except Exception:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-
         if os.path.exists(model_dir) and os.path.isdir(model_dir):
+            try:
+                from tokenization_kobert import KoBERTTokenizer
+                self.tokenizer = KoBERTTokenizer.from_pretrained(model_dir)
+            except Exception:
+                self.tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
             try:
                 self.kobert = AutoModelForSequenceClassification.from_pretrained(model_dir)
             except Exception:
                 self.kobert = AutoModelForSequenceClassification.from_pretrained("skt/kobert-base-v1", num_labels=7)
         else:
+            self.tokenizer = AutoTokenizer.from_pretrained("skt/kobert-base-v1", trust_remote_code=True)
             self.kobert = AutoModelForSequenceClassification.from_pretrained("skt/kobert-base-v1", num_labels=7)
 
         self.kobert.to(self.device)

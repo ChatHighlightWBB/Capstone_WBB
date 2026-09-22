@@ -43,7 +43,7 @@ export async function getResult(videoId) {
 
 /** 설정 페이지에서 보관 기간(RETENTION_HOURS) 등 서버 정보를 보여줄 때 씁니다. */
 export async function getServerInfo() {
-  const res = await fetch(`${API_BASE}/`);
+  const res = await fetch(`${API_BASE}/api/v1/info`);
   if (!res.ok) throw new Error(`서버 정보 조회 실패 (HTTP ${res.status})`);
   return res.json();
 }

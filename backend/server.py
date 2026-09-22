@@ -484,6 +484,7 @@ async def run_analysis_job_from_file(video_path: str, video_id: str, crop_box_ov
 
 # --- 4. REST API 엔드포인트 ---
 
+@app.get("/api/v1/info")
 @app.get("/")
 def read_root():
     return {
