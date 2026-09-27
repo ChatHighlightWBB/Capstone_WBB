@@ -134,6 +134,11 @@ class WBBPPOCRExtractor:
             use_doc_unwarping=False,
             use_textline_orientation=False,
             device="gpu:0",
+            # [Colab T4 세그폴트 회피] 기본 감지 모델(PP-OCRv5_server_det)이
+            # T4 GPU에서 종료 코드 -11(SIGSEGV)로 프로세스를 죽입니다.
+            # 세그폴트는 아래 try/except로 잡히지 않아 CPU 폴백도 동작하지
+            # 않으므로, 가벼운 mobile 감지 모델로 바꿔 문제 자체를 피합니다.
+            text_detection_model_name="PP-OCRv5_mobile_det",
             det_db_unclip_ratio=2.0,
             det_db_box_thresh=0.5,
         )
@@ -148,6 +153,9 @@ class WBBPPOCRExtractor:
             # "ConvertPirAttribute2RuntimeAttribute not support" 크래시가
             # 사라집니다.
             enable_mkldnn=False,
+            # GPU 경로와 같은 감지 모델을 써서, 어느 경로로 초기화되든
+            # Auto-ROI/품질 필터 결과가 같게 맞춥니다. (CPU 속도도 더 빠름)
+            text_detection_model_name="PP-OCRv5_mobile_det",
             det_db_unclip_ratio=2.0,
             det_db_box_thresh=0.5,
         )
