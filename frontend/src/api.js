@@ -8,7 +8,7 @@ export async function startAnalysis(videoUrl) {
   const cropBox = cropBoxToArray(); // 설정 페이지에서 수동으로 지정했으면 실어 보냄
   const res = await fetch(`${API_BASE}/api/v1/analyze`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
     body: JSON.stringify({ video_url: videoUrl, ...(cropBox ? { crop_box: cropBox } : {}) }),
   });
   if (!res.ok) {
@@ -24,7 +24,11 @@ export async function startAnalysisFromFile(file) {
   const cropBox = cropBoxToArray();
   if (cropBox) formData.append("crop_box", cropBox.join(","));
 
-  const res = await fetch(`${API_BASE}/api/v1/analyze-upload`, { method: "POST", body: formData });
+  const res = await fetch(`${API_BASE}/api/v1/analyze-upload`, {
+    method: "POST",
+    headers: { "ngrok-skip-browser-warning": "true" },
+    body: formData,
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `업로드 실패 (HTTP ${res.status})`);
@@ -33,7 +37,9 @@ export async function startAnalysisFromFile(file) {
 }
 
 export async function getResult(videoId) {
-  const res = await fetch(`${API_BASE}/api/v1/result/${videoId}`);
+  const res = await fetch(`${API_BASE}/api/v1/result/${videoId}`, {
+    headers: { "ngrok-skip-browser-warning": "true" },
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `결과 조회 실패 (HTTP ${res.status})`);
@@ -43,7 +49,9 @@ export async function getResult(videoId) {
 
 /** 설정 페이지에서 보관 기간(RETENTION_HOURS) 등 서버 정보를 보여줄 때 씁니다. */
 export async function getServerInfo() {
-  const res = await fetch(`${API_BASE}/api/v1/info`);
+  const res = await fetch(`${API_BASE}/api/v1/info`, {
+    headers: { "ngrok-skip-browser-warning": "true" },
+  });
   if (!res.ok) throw new Error(`서버 정보 조회 실패 (HTTP ${res.status})`);
   return res.json();
 }
