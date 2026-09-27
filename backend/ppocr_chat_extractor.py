@@ -167,6 +167,14 @@ class WBBPPOCRExtractor:
         else:
             print("ℹ️ 파인튜닝된 모델을 찾지 못해 기본 사전학습 모델을 사용합니다.")
 
+        # [임시 테스트 — 커밋 금지] Colab CPU 처리 속도 측정용.
+        # GPU 시도(아래 try 블록)를 건너뛰고 바로 CPU로 초기화합니다.
+        # 측정이 끝나면 이 블록만 지우면 원래대로 돌아옵니다.
+        print("🧪 [임시] GPU 시도를 건너뛰고 CPU로 바로 초기화합니다 (속도 측정용).")
+        self.ocr = PaddleOCR(**cpu_kwargs)
+        print("✅ PaddleOCR 모델 로딩 완료 (CPU, 강제)")
+        return
+
         try:
             print("🚀 GPU(device=\"gpu:0\")로 PaddleOCR 초기화를 시도합니다...")
             self.ocr = PaddleOCR(**gpu_kwargs)
