@@ -424,7 +424,10 @@ class WBBPPOCRExtractor:
         # (이걸 안 하면 이전 실행 결과 CSV가 그대로 남아있어서,
         #  이번 영상과 무관한 옛날 데이터로 다음 단계가 진행됩니다)
         # --------------------------------------------------
-        df = pd.DataFrame(extracted_chats)
+        # 0건이면 pd.DataFrame([])에 컬럼이 하나도 없어서 헤더 없는 빈 파일이
+        # 써지고, 다음 단계 read_csv가 "No columns to parse"로 죽습니다.
+        # 컬럼을 명시해서 0건이어도 헤더는 항상 남깁니다.
+        df = pd.DataFrame(extracted_chats, columns=["timestamp", "frame", "chat_text"])
         df.to_csv(output_csv_path, index=False, encoding="utf-8-sig")
 
         if extracted_chats:
