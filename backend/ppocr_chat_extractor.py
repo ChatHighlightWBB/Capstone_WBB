@@ -139,6 +139,9 @@ class WBBPPOCRExtractor:
             # 세그폴트는 아래 try/except로 잡히지 않아 CPU 폴백도 동작하지
             # 않으므로, 가벼운 mobile 감지 모델로 바꿔 문제 자체를 피합니다.
             text_detection_model_name="PP-OCRv5_mobile_det",
+            # det 모델 이름을 지정하면 PaddleOCR이 lang="korean"을 무시하므로
+            # (기본 중국어 rec 모델로 바뀜), 한국어 rec 모델도 명시해야 합니다.
+            text_recognition_model_name="korean_PP-OCRv5_mobile_rec",
             det_db_unclip_ratio=2.0,
             det_db_box_thresh=0.5,
         )
@@ -156,6 +159,7 @@ class WBBPPOCRExtractor:
             # GPU 경로와 같은 감지 모델을 써서, 어느 경로로 초기화되든
             # Auto-ROI/품질 필터 결과가 같게 맞춥니다. (CPU 속도도 더 빠름)
             text_detection_model_name="PP-OCRv5_mobile_det",
+            text_recognition_model_name="korean_PP-OCRv5_mobile_rec",
             det_db_unclip_ratio=2.0,
             det_db_box_thresh=0.5,
         )
