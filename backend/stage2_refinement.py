@@ -19,6 +19,17 @@ import pandas as pd
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
+KOBERT_TOKENIZER_ID = "monologg/kobert"
+
+
+def load_kobert_tokenizer():
+    """monologg/kobert 토크나이저 로드: 로컬 HF 캐시 우선, 캐시에 없을 때만 다운로드"""
+    try:
+        return AutoTokenizer.from_pretrained(KOBERT_TOKENIZER_ID, trust_remote_code=True, local_files_only=True)
+    except Exception:
+        return AutoTokenizer.from_pretrained(KOBERT_TOKENIZER_ID, trust_remote_code=True)
+
+
 class WBBStage2Refinement:
     def __init__(self, model_dir: str = "./kobert_wbb_model"):
         print("🧠 [1/3] 2차 검증용 KoBERT 및 Whisper STT 모델 로딩 중...")
@@ -26,11 +37,8 @@ class WBBStage2Refinement:
         self.emotion_labels = ["기쁨", "당황", "분노", "불안", "상처", "슬픔", "중립"]
 
         if os.path.exists(model_dir) and os.path.isdir(model_dir):
-            try:
-                from tokenization_kobert import KoBERTTokenizer
-                self.tokenizer = KoBERTTokenizer.from_pretrained(model_dir)
-            except Exception:
-                self.tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
+            # 폴더에 저장된 토크나이저는 transformers 4.x에서 한국어를 [UNK]로 깨뜨리므로 monologg/kobert 사용
+            self.tokenizer = load_kobert_tokenizer()
             try:
                 self.kobert = AutoModelForSequenceClassification.from_pretrained(model_dir)
             except Exception:
