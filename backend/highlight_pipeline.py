@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import platform
 import subprocess
 
@@ -156,17 +157,51 @@ class WBBAutoHighlightPipeline:
         stage1_json_path = "stage1_candidates.json"
         print("\n▶️ [STEP 3/5] 30초 Sliding Window 1차 하이라이트 후보 탐지...")
         detector = WBBSlidingWindowDetector(json_path=emotion_json_path)
-        detector.detect_candidate_windows(
+        stage1_candidates = detector.detect_candidate_windows(
             window_size=30.0,
             step_size=5.0,
             output_json=stage1_json_path
         )
 
+        final_candidates_json = "final_highlight_candidates.json"
+
+        # 채팅이 0건이거나 임계점을 넘는 구간이 없으면 Step 4~5를 건너뛰고
+        # "하이라이트 0개"로 정상 종료합니다. (실패가 아니라 결과가 없는 것)
+        # empty_reason으로 프론트가 사용자에게 보여줄 안내 문구를 고릅니다.
+        if not stage1_candidates:
+            empty_reason = "no_chats" if not detector.time_series else "no_candidates"
+            with open(final_candidates_json, "w", encoding="utf-8") as jf:
+                json.dump(
+                    {
+                        "metadata": {
+                            "source_video": video_path,
+                            "total_highlights_count": 0,
+                            "total_highlight_duration_sec": 0.0,
+                            "empty_reason": empty_reason,
+                        },
+                        "highlights": [],
+                    },
+                    jf, ensure_ascii=False, indent=2,
+                )
+
+            total_elapsed = round(time.time() - start_total_time, 2)
+            print("\n" + "=" * 80)
+            print(f"ℹ️ [파이프라인 조기 종료] 하이라이트 후보 없음({empty_reason}) — "
+                  f"Step 4~5 생략. 총 소요 시간: {total_elapsed}초")
+            print("=" * 80)
+            return {
+                "status": "success",
+                "elapsed_time_sec": total_elapsed,
+                "final_video": None,
+                "highlight_clips": [],
+                "emotion_timeseries_json": emotion_json_path,
+                "final_candidates_json": final_candidates_json,
+            }
+
         # ----------------------------------------------------
         # [Step 4] 2차 정밀 검증 (Whisper STT + 스트리머 발화 감정 분석)
         # ----------------------------------------------------
         _report(4)
-        final_candidates_json = "final_highlight_candidates.json"
         print("\n▶️ [STEP 4/5] Whisper STT 스트리머 음성 2차 정밀 검증...")
         self.stage2_refiner.refine_candidates(
             video_path=video_path,

@@ -10,6 +10,14 @@ import DownloadPanel from "../components/DownloadPanel.jsx";
 import { pollResult } from "../api.js";
 import { getNotifyOnDone } from "../settingsStorage.js";
 
+// 분석은 끝났지만 하이라이트가 0개일 때 (서버가 metadata.empty_reason으로 이유를 알려줌)
+const EMPTY_HIGHLIGHT_MESSAGE = {
+  no_chats:
+    "채팅을 인식하지 못해 하이라이트를 만들 수 없어요. 채팅창이 화면에 보이는 영상인지 확인하거나, 파일 업로드에서 채팅 영역을 직접 지정해 다시 시도해보세요.",
+  no_candidates:
+    "채팅은 인식했지만 반응이 두드러진 구간을 찾지 못해 하이라이트를 만들지 않았어요.",
+};
+
 export default function Result() {
   const { videoId } = useParams();
   const location = useLocation();
@@ -37,8 +45,14 @@ export default function Result() {
           Notification.permission === "granted"
         ) {
           notifiedRef.current = true;
+          const noHighlights = !data.highlight_result?.highlights?.length;
+          const noCandidates = data.highlight_result?.metadata?.empty_reason === "no_candidates";
           new Notification("와바바 분석 완료", {
-            body: "하이라이트 요약이 준비됐어요. 확인해보세요!",
+            body: !noHighlights
+              ? "하이라이트 요약이 준비됐어요. 확인해보세요!"
+              : noCandidates
+                ? "반응이 두드러진 구간을 찾지 못해 하이라이트를 만들지 않았어요."
+                : "채팅을 인식하지 못해 하이라이트를 만들지 못했어요.",
             icon: "/favicon.ico",
           });
         }
@@ -49,6 +63,8 @@ export default function Result() {
 
   const status = result?.video_info.status;
   const isInProgress = status && status !== "done" && status !== "failed";
+  const hasNoHighlights = status === "done" && !result.highlight_result?.highlights?.length;
+  const emptyReason = result?.highlight_result?.metadata?.empty_reason;
 
   return (
     <div className="app-shell">
@@ -65,6 +81,12 @@ export default function Result() {
           {status === "failed" && (
             <div className="status-banner" data-status="failed">
               분석 실패{result.video_info.error && ` — ${result.video_info.error}`}
+            </div>
+          )}
+
+          {hasNoHighlights && (
+            <div className="status-banner">
+              {EMPTY_HIGHLIGHT_MESSAGE[emptyReason] ?? "하이라이트로 만들 구간을 찾지 못했어요."}
             </div>
           )}
 

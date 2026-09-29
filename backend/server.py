@@ -28,6 +28,8 @@ import json
 import shutil
 import asyncio
 import subprocess
+import traceback
+import faulthandler
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from enum import Enum
@@ -42,6 +44,11 @@ from pydantic import BaseModel, HttpUrl
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from highlight_pipeline import WBBAutoHighlightPipeline
+
+# torch 등 네이티브 코드에서 access violation 같은 크래시가 나면 파이썬 예외가
+# 아니라서 traceback 없이 프로세스가 죽습니다. 그때라도 모든 스레드의 파이썬
+# 스택을 stderr에 남겨서 어느 단계에서 죽었는지 알 수 있게 합니다.
+faulthandler.enable()
 
 # --- 0. 환경 변수(.env) 로드 및 경로 설정 ---
 load_dotenv()
@@ -88,7 +95,56 @@ pipeline: Optional[WBBAutoHighlightPipeline] = None
 # 진행 중이던 작업도 재시작하면 이어지지 않으므로 문제 없음)
 PROGRESS: Dict[str, Dict[str, Any]] = {}
 
+# 분석(Step 1~5 + 결과 저장)은 한 번에 하나만 돌립니다. 파이프라인 객체
+# (Whisper/KoBERT)를 여러 스레드가 동시에 쓰면 충돌해서 서버가 죽고,
+# 중간 파일도 작업마다 같은 이름이라 서로 덮어쓰기 때문입니다.
+# Python 3.9의 asyncio.Lock은 생성 시점의 이벤트 루프에 묶여서, 모듈에서
+# 바로 만들면 uvicorn 루프와 어긋나 대기 시 RuntimeError가 납니다 → lifespan에서 생성.
+ANALYSIS_LOCK: Optional[asyncio.Lock] = None
+
+# 파이프라인 모듈들이 작업 폴더(backend/)에 고정된 이름으로 쓰는 중간 산출물.
+# 이전 작업 것이 남아 있으면 다음 작업 결과에 그대로 섞여 들어갑니다.
+PIPELINE_TEMP_FILES = [
+    "extracted_ocr_chats.csv",
+    "video_emotion_timeseries.csv",
+    "video_emotion_timeseries.json",
+    "stage1_candidates.csv",
+    "stage1_candidates.json",
+    "final_highlight_candidates.csv",
+    "final_highlight_candidates.json",
+    "final_highlight.mp4",
+]
+PIPELINE_TEMP_DIRS = ["temp_clips", "temp_separated"]
+
 scheduler = AsyncIOScheduler()
+
+
+def _clear_pipeline_temp_files():
+    """
+    이전 작업의 중간 파일을 지웁니다. 폴더 자체는 남기고 안의 내용만 지웁니다.
+    (temp_clips는 서버 시작 시 WBBFFmpegClipper가 한 번만 만들기 때문에
+    폴더째 지우면 다음 Step 5에서 클립을 쓸 곳이 없어집니다.)
+    """
+    for path in PIPELINE_TEMP_FILES:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            print(f"⚠️ [정리] {path} 삭제 실패: {e}")
+
+    for dir_path in PIPELINE_TEMP_DIRS:
+        if not os.path.isdir(dir_path):
+            continue
+        for name in os.listdir(dir_path):
+            entry = os.path.join(dir_path, name)
+            try:
+                if os.path.isdir(entry):
+                    shutil.rmtree(entry)
+                else:
+                    os.remove(entry)
+            except OSError as e:
+                print(f"⚠️ [정리] {entry} 삭제 실패: {e}")
 
 
 async def cleanup_expired_jobs():
@@ -130,7 +186,9 @@ async def lifespan(app: FastAPI):
     db.db = db.client[DB_NAME]
     print(f"✅ [WBB DB] MongoDB Atlas ({DB_NAME}) 연동 성공!")
 
-    global pipeline
+    global pipeline, ANALYSIS_LOCK
+    ANALYSIS_LOCK = asyncio.Lock()  # 실행 중인 uvicorn 루프 안에서 생성 (위 ANALYSIS_LOCK 주석 참고)
+
     try:
         print("🚀 [WBB AI] KoBERT + PP-OCRv3 + Demucs + Whisper 파이프라인 로딩 중...")
         pipeline = WBBAutoHighlightPipeline(model_dir=KOBERT_MODEL_DIR)
@@ -248,10 +306,11 @@ class HighlightItem(BaseModel):
 
 class HighlightMetadata(BaseModel):
     source_video: str
-    top_k_limit: int
-    max_duration_cap_sec: float
+    top_k_limit: Optional[int] = None  # 하이라이트 0개로 조기 종료하면 없음
+    max_duration_cap_sec: Optional[float] = None  # 〃
     total_highlights_count: int
     total_highlight_duration_sec: float
+    empty_reason: Optional[str] = None  # "no_chats" | "no_candidates" (하이라이트 0개일 때만)
 
 
 class HighlightResult(BaseModel):
@@ -324,9 +383,13 @@ async def _finalize_success(video_id: str, result_meta: dict):
     with open(result_meta["final_candidates_json"], "r", encoding="utf-8") as f:
         highlight_result = json.load(f)
 
+    # 하이라이트가 0개면 병합 영상이 없어서(final_video=None) URL도 비워둡니다.
+    # (예전처럼 항상 URL을 넣으면 프론트에 404 나는 빈 플레이어가 뜹니다)
+    final_video_url = None
     final_video_dest = os.path.join(OUTPUT_DIR, f"{video_id}_highlight.mp4")
-    if os.path.exists(result_meta["final_video"]):
+    if result_meta.get("final_video") and os.path.exists(result_meta["final_video"]):
         shutil.move(result_meta["final_video"], final_video_dest)
+        final_video_url = f"/files/{video_id}_highlight.mp4"
 
     # [추가] 병합 영상 말고, 하이라이트별 개별 클립도 outputs/로 옮겨서
     # 각각 따로 재생할 수 있게 clip_url을 붙입니다. highlight_clips 리스트는
@@ -352,11 +415,12 @@ async def _finalize_success(video_id: str, result_meta: dict):
                 "elapsed_time_sec": result_meta["elapsed_time_sec"],
                 "emotion_timeseries": emotion_timeseries,
                 "highlight_result": highlight_result,
-                "final_video_url": f"/files/{video_id}_highlight.mp4",
+                "final_video_url": final_video_url,
             }
         },
     )
-    print(f"🎉 [WBB] {video_id} 분석 완료 ({result_meta['elapsed_time_sec']}초)")
+    print(f"🎉 [WBB] {video_id} 분석 완료 ({result_meta['elapsed_time_sec']}초, "
+          f"하이라이트 {len(highlights_list)}개)")
 
 
 async def _set_status(video_id: str, status: "JobStatus", **extra):
@@ -364,6 +428,44 @@ async def _set_status(video_id: str, status: "JobStatus", **extra):
         {"video_id": video_id},
         {"$set": {"status": status.value, "updated_at": datetime.utcnow(), **extra}},
     )
+
+
+async def _run_pipeline_exclusively(video_id: str, video_path: str, crop_box_override=None):
+    """
+    Step 1~5 + 결과 저장을 ANALYSIS_LOCK 안에서 한 번에 하나씩 실행합니다.
+    앞 작업이 분석 중이면 queued("분석 대기 중") 상태로 차례를 기다립니다.
+    _finalize_success도 락 안에 둬야 합니다 — 공용 이름의 결과 JSON과
+    final_highlight.mp4를 읽고 옮기는 동안 다음 작업이 덮어쓰면 안 되기 때문입니다.
+    """
+    if pipeline is None:
+        raise RuntimeError(
+            f"AI 파이프라인이 로드되지 않았습니다. {KOBERT_MODEL_DIR} 경로의 "
+            f"파인튜닝된 KoBERT 모델을 확인하세요."
+        )
+
+    loop = asyncio.get_running_loop()
+
+    def _on_progress(step: int, label: str):
+        PROGRESS[video_id] = {"step": step, "total_steps": 5, "label": label}
+
+    effective_crop_box = tuple(crop_box_override) if crop_box_override else CHAT_CROP_BOX
+
+    if ANALYSIS_LOCK.locked():
+        print(f"⏳ [{video_id}] 앞선 분석이 끝날 때까지 대기합니다.")
+    await _set_status(video_id, JobStatus.QUEUED)
+
+    async with ANALYSIS_LOCK:
+        # 락을 잡은 뒤에 지워야 합니다. 락 밖에서 지우면 지금 돌고 있는
+        # 앞 작업의 중간 파일을 지워버릴 수 있습니다.
+        _clear_pipeline_temp_files()
+        await _set_status(video_id, JobStatus.ANALYZING)
+        result_meta = await loop.run_in_executor(
+            None,
+            lambda: pipeline.run_full_pipeline(
+                video_path=video_path, crop_box=effective_crop_box, on_progress=_on_progress
+            ),
+        )
+        await _finalize_success(video_id, result_meta)
 
 
 async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_box_override=None):
@@ -431,29 +533,12 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
               f"시도 {attempt}회, {dl_size_mb:.1f}MB)")
 
         # Step 1~5: 실제 AI 파이프라인 (OCR → KoBERT → SlidingWindow → Whisper/Demucs → FFmpeg)
-        if pipeline is None:
-            raise RuntimeError(
-                f"AI 파이프라인이 로드되지 않았습니다. {KOBERT_MODEL_DIR} 경로의 "
-                f"파인튜닝된 KoBERT 모델을 확인하세요."
-            )
-
-        await _set_status(video_id, JobStatus.ANALYZING)
-
-        def _on_progress(step: int, label: str):
-            PROGRESS[video_id] = {"step": step, "total_steps": 5, "label": label}
-
-        effective_crop_box = tuple(crop_box_override) if crop_box_override else CHAT_CROP_BOX
-        result_meta = await loop.run_in_executor(
-            None,
-            lambda: pipeline.run_full_pipeline(
-                video_path=output_path, crop_box=effective_crop_box, on_progress=_on_progress
-            ),
-        )
-
-        await _finalize_success(video_id, result_meta)
+        # 다운로드는 락 밖에서 끝냈고, 분석만 차례를 기다려서 한 번에 하나씩 돕니다.
+        await _run_pipeline_exclusively(video_id, output_path, crop_box_override)
 
     except Exception as e:
         print(f"❌ [WBB] {video_id} 분석 실패: {e}")
+        traceback.print_exc()
         await _set_status(video_id, JobStatus.FAILED, error=str(e))
 
     finally:
@@ -468,29 +553,11 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
 
 async def run_analysis_job_from_file(video_path: str, video_id: str, crop_box_override=None):
     try:
-        if pipeline is None:
-            raise RuntimeError(
-                f"AI 파이프라인이 로드되지 않았습니다. {KOBERT_MODEL_DIR} 경로를 확인하세요."
-            )
-
-        await _set_status(video_id, JobStatus.ANALYZING)
-        loop = asyncio.get_running_loop()
-
-        def _on_progress(step: int, label: str):
-            PROGRESS[video_id] = {"step": step, "total_steps": 5, "label": label}
-
-        effective_crop_box = tuple(crop_box_override) if crop_box_override else CHAT_CROP_BOX
-        result_meta = await loop.run_in_executor(
-            None,
-            lambda: pipeline.run_full_pipeline(
-                video_path=video_path, crop_box=effective_crop_box, on_progress=_on_progress
-            ),
-        )
-
-        await _finalize_success(video_id, result_meta)
+        await _run_pipeline_exclusively(video_id, video_path, crop_box_override)
 
     except Exception as e:
         print(f"❌ [WBB] {video_id} 분석 실패: {e}")
+        traceback.print_exc()
         await _set_status(video_id, JobStatus.FAILED, error=str(e))
 
     finally:
