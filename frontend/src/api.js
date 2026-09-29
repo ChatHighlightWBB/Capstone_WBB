@@ -18,10 +18,14 @@ export async function startAnalysis(videoUrl) {
   return res.json();
 }
 
-export async function startAnalysisFromFile(file) {
+/**
+ * cropBoxOverride: 업로드 화면에서 이번 분석에만 쓸 [ymin, xmin, ymax, xmax].
+ * 넘기지 않으면(undefined) 설정 페이지에 저장된 값을, null이면 crop_box 없이(Auto-ROI) 보냅니다.
+ */
+export async function startAnalysisFromFile(file, cropBoxOverride) {
   const formData = new FormData();
   formData.append("file", file);
-  const cropBox = cropBoxToArray();
+  const cropBox = cropBoxOverride === undefined ? cropBoxToArray() : cropBoxOverride;
   if (cropBox) formData.append("crop_box", cropBox.join(","));
 
   const res = await fetch(`${API_BASE}/api/v1/analyze-upload`, {

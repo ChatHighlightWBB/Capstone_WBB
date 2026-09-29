@@ -39,11 +39,11 @@ export default function Home() {
     }
   };
 
-  const handleFileSubmit = async (file) => {
+  const handleFileSubmit = async (file, cropBox) => {
     setError(null);
     setSubmitting(true);
     try {
-      const accepted = await startAnalysisFromFile(file);
+      const accepted = await startAnalysisFromFile(file, cropBox);
       addToHistory({ videoId: accepted.video_id, label: file.name });
       // 방금 고른 파일은 서버 왕복 없이 브라우저에서 바로 재생할 수 있습니다.
       const previewUrl = URL.createObjectURL(file);
