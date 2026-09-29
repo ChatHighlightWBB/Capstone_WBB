@@ -10,6 +10,9 @@ frontend/dist/
 backend/kobert_wbb_model/
 backend/models/
 
+# 외부 실행 파일 (yt-dlp.exe 등, 각자 받아서 넣기)
+backend/bin/
+
 # 실행 중 생기는 임시/결과 파일
 backend/temp_storage/
 backend/outputs/

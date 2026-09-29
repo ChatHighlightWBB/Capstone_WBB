@@ -58,6 +58,13 @@ CHAT_CROP_BOX = tuple(float(x) for x in _crop_box_env.split(",")) if _crop_box_e
 # MongoDB 문서와 outputs/의 mp4 파일이 함께 자동 삭제됩니다.
 RETENTION_HOURS = float(os.getenv("RETENTION_HOURS", "4"))
 
+# 유튜브 다운로드용 yt-dlp 실행 파일. venv(Python 3.9)에는 2025.10.14까지만
+# 설치돼서, Python 없이 도는 최신 standalone exe를 backend/bin/에 두고 씁니다.
+# (경로 없이 "yt-dlp"만 쓰면 PATH에 먼저 잡힌 다른 venv의 구버전이 실행됨)
+YTDLP_BIN = os.getenv(
+    "YTDLP_BIN", os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "yt-dlp.exe")
+)
+
 TEMP_STORAGE_DIR = "temp_storage"
 OUTPUT_DIR = "outputs"  # 최종 하이라이트 영상 및 결과 JSON 보관용 (React가 접근)
 os.makedirs(TEMP_STORAGE_DIR, exist_ok=True)
@@ -281,15 +288,16 @@ def build_download_command(platform: str, video_url: str, output_path: str) -> s
     없습니다. 실패하면 결국 파일 업로드로 안내하는 게 맞습니다.
     """
     if platform == "youtube":
-        # [팀원 실제 테스트 반영] android_vr은 포맷 목록 조회까진 되지만
-        # 실제 다운로드에서 403 (2026-08부터 구글이 PO Token 요구 확대).
-        # android 클라이언트로 되돌리되, 이 클라이언트도 360p(format 18)
-        # 초과분엔 PO Token이 필요하다고 공식 문서에 명시돼 있어서,
-        # 480p를 요청하면 같은 403이 재발할 수 있습니다. 실제로 안정적인
-        # 건 360p까지라 캡을 360으로 맞춰서 요청 자체를 그 안에서 하게 합니다.
+        # android 클라이언트는 이제 GVS PO Token 없이는 https 포맷을 안 주고,
+        # 영상+음성 통합 포맷(format 18)도 대부분 사라져서 "best[...]"는
+        # "Requested format is not available"로 실패합니다.
+        # → 기본 클라이언트 + node(JS 챌린지)로 HLS 영상/음성을 따로 받아 병합.
+        # -S "res:480"은 짧은 변 기준이라 가로 854x480, Shorts 480x854가 됩니다.
+        # (360p는 채팅 글씨가 작아 OCR이 놓치는 경우가 있어 480으로 올림)
         return (
-            f'yt-dlp -f "best[height<=360]" '
-            f'--extractor-args "youtube:player_client=android" '
+            f'"{YTDLP_BIN}" --js-runtimes node '
+            f'-f "bv*[protocol^=m3u8]+ba[protocol^=m3u8]/bv*+ba/b" -S "res:480" '
+            f'--merge-output-format mp4 '
             f'--no-check-certificates --no-mtime -o "{output_path}" "{video_url}"'
         )
     if platform == "chzzk":
@@ -359,13 +367,15 @@ async def _set_status(video_id: str, status: "JobStatus", **extra):
 
 
 async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_box_override=None):
-    output_path = os.path.join(TEMP_STORAGE_DIR, f"{video_id}_360p.mp4")
+    output_path = os.path.join(TEMP_STORAGE_DIR, f"{video_id}_480p.mp4")
 
     try:
         # Step 0: 스트림 다운로드 (프록시용 저화질)
         await _set_status(video_id, JobStatus.DOWNLOADING)
         command = build_download_command(platform, video_url, output_path)
         loop = asyncio.get_running_loop()
+        dl_start = datetime.now()
+        print(f"⬇️ [{video_id}] 다운로드 시작: {dl_start.strftime('%H:%M:%S.%f')[:-3]} ({platform})")
 
         # [추가] 재시도 로직: 특히 CHZZK는 "재인코딩 중", API 일시 오류 등으로
         # 첫 시도에 실패해도 몇 초 뒤 재시도하면 성공하는 경우가 흔합니다.
@@ -380,6 +390,10 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
                 ),
             )
             if result.returncode == 0 and os.path.exists(output_path):
+                break
+            # 포맷 자체가 없는 경우는 다시 시도해도 결과가 같으므로 바로 포기합니다.
+            if "Requested format is not available" in (result.stderr or ""):
+                print(f"⚠️ [{video_id}] 요청한 포맷이 없어 재시도하지 않습니다.")
                 break
             print(f"⚠️ [{video_id}] 다운로드 시도 {attempt}/{MAX_DOWNLOAD_RETRIES} 실패 "
                   f"(종료 코드 {result.returncode}). "
@@ -405,10 +419,16 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
 
             if not direct_success:
                 raise RuntimeError(
-                    f"{platform} 스트림 다운로드 실패 (표준 방식 {MAX_DOWNLOAD_RETRIES}회 + "
+                    f"{platform} 스트림 다운로드 실패 (표준 방식 {attempt}회 + "
                     f"직접 다운로드 방식 모두 실패). 파일 업로드를 이용해주세요. "
                     f"stderr: {result.stderr[-500:] if result.stderr else 'N/A'}"
                 )
+
+        dl_end = datetime.now()
+        dl_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        print(f"⬇️ [{video_id}] 다운로드 완료: {dl_end.strftime('%H:%M:%S.%f')[:-3]} "
+              f"(걸린 시간 {(dl_end - dl_start).total_seconds():.1f}초, "
+              f"시도 {attempt}회, {dl_size_mb:.1f}MB)")
 
         # Step 1~5: 실제 AI 파이프라인 (OCR → KoBERT → SlidingWindow → Whisper/Demucs → FFmpeg)
         if pipeline is None:
@@ -438,7 +458,7 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
 
     finally:
         PROGRESS.pop(video_id, None)
-        # 디스크 정리 (원본/360p 임시 파일만 삭제, 결과물은 outputs/에 보존)
+        # 디스크 정리 (원본/480p 임시 파일만 삭제, 결과물은 outputs/에 보존)
         if os.path.exists(output_path):
             try:
                 os.remove(output_path)
