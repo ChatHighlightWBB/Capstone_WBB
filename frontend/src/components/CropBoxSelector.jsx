@@ -77,13 +77,7 @@ export default function CropBoxSelector({ imageSrc, initialBox, onChange }) {
         onMouseUp={finishDrag}
         onMouseLeave={finishDrag}
       >
-        {/* 이미지가 실제로 로드된 뒤에야 높이가 정해지므로, 그때 초기 박스를 다시 계산합니다. */}
-        <img
-          src={imageSrc}
-          alt="채팅창 위치 지정용 미리보기"
-          draggable={false}
-          onLoad={applyInitialBox}
-        />
+        <img src={imageSrc} alt="채팅창 위치 지정용 미리보기" draggable={false} />
         {box && (
           <div
             className="cropbox-selector-rect"

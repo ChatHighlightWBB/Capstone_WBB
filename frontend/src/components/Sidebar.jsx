@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { getInitialTheme, applyTheme } from "../theme.js";
 import { getHistory } from "../history.js";
+import Mascot from "./Mascot.jsx";
 
 // 어느 페이지에 있든 항상 보이는 전역 메뉴
 const GLOBAL_LINKS = [
@@ -14,6 +15,7 @@ const HOME_SECTION_LINKS = [
   { id: "recent-history-section", label: "최근 내역" },
   { id: "how", label: "이용 방법" },
   { id: "features", label: "기능" },
+  { id: "baba", label: "바바 소개" },
 ];
 
 // 결과(대시보드) 화면 안에서만 의미 있는 구간 이동 링크
@@ -84,7 +86,7 @@ export default function Sidebar() {
   return (
     <aside className="sidebar">
       <Link to="/" className="sidebar-brand">
-        <span className="navbar-mascot" aria-hidden="true">W</span>
+        <Mascot size={42} outline="#F3EFE7" className="sidebar-mascot" />
         <span className="sidebar-word">와바바</span>
       </Link>
 
@@ -112,6 +114,13 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-bottom">
+        <Link
+          to="/help"
+          className={`sidebar-help ${location.pathname === "/help" ? "active" : ""}`}
+        >
+          🛠️ 오류 대처 방법
+        </Link>
+
         <Link to="/" className="sidebar-cta">
           {isHome ? "새로 시작하기" : "다시 분석하기"}
         </Link>

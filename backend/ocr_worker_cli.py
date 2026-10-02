@@ -64,7 +64,16 @@ def main():
             print(f"[ocr_worker] crop-box 형식이 잘못됐습니다: {args.crop_box}", file=sys.stderr)
             sys.exit(2)
 
-    # 이 지점 이전에는 paddle/paddleocr을 아직 아무것도 import하지 않습니다.
+    # [2026-10 수정] 이 워커는 torch를 직접 쓰진 않지만, paddlex가 내부에서
+    # modelscope를 무조건 import하고 modelscope가 torch를 import합니다.
+    # torch(cuDNN 9.10)와 paddle(cuDNN 9.5)은 어느 쪽을 먼저 불러도 나중 쪽이
+    # WinError 127(cudnn_cnn64_9.dll)로 죽으므로, 이 프로세스에서는 torch import
+    # 자체를 막습니다. (None으로 막으면 import torch가 ImportError가 되고,
+    # modelscope는 torch 없이도 모델 다운로드 기능은 정상 동작합니다.)
+    sys.modules["torch"] = None
+    import paddle  # noqa: F401  — cuDNN을 paddle 것으로 먼저 고정
+
+    # 이 지점 이전에는 paddleocr을 아직 아무것도 import하지 않습니다.
     # (모듈 최상단에서 import하면 argparse 에러 하나 내는 데도 무거운 모델
     #  로딩 코드까지 다 실행되니, 여기서 지연 import합니다.)
     from ppocr_chat_extractor import WBBPPOCRExtractor

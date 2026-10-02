@@ -1,7 +1,6 @@
 import os
 import sys
 import json
-import platform
 import subprocess
 
 # ==============================================================================
@@ -34,20 +33,10 @@ class WBBAutoHighlightPipeline:
         print("=" * 80)
         
         # 1. 각 단계별 인퍼런스 엔진 로드
-        # [OS 분기] OCR(paddle) 로딩 방식
-        # - Windows: torch(Whisper/Demucs)와 같은 프로세스에 paddle이 같이
-        #   있으면 DLL 충돌이 나서, ocr_worker_cli.py를 통해 매번 별도
-        #   프로세스로 실행합니다. 여기서는 미리 로드하지 않습니다.
-        # - 그 외(Linux/Colab): 이 충돌이 확인되지 않아, 서버 시작 시 1회만
-        #   로드해서 재사용합니다. (분석마다 모델을 새로 로딩하는 시간 절약)
-        #   (아래 run_full_pipeline Step 1 참고)
-        self.use_ocr_subprocess = platform.system() == "Windows"
-        self.ocr_extractor = None
-        if not self.use_ocr_subprocess:
-            # Windows에서는 메인 프로세스에 paddle이 아예 import되지 않도록
-            # 여기서 지연 import합니다.
-            from ppocr_chat_extractor import WBBPPOCRExtractor
-            self.ocr_extractor = WBBPPOCRExtractor()
+        # [수정] OCR(paddle)은 더 이상 여기서 미리 로드하지 않습니다.
+        # torch(Whisper/Demucs)와 같은 프로세스에 paddle이 같이 있으면
+        # Windows에서 충돌이 나서, ocr_worker_cli.py를 통해 완전히 별도
+        # 프로세스로 매번 실행합니다. (아래 run_full_pipeline Step 1 참고)
         self.emotion_generator = WBBEmotionDatasetGenerator(model_dir=model_dir)
         self.stage2_refiner = WBBStage2Refinement(model_dir=model_dir)
         self.clipper = WBBFFmpegClipper()
@@ -96,45 +85,34 @@ class WBBAutoHighlightPipeline:
         # ----------------------------------------------------
         _report(1)
         ocr_csv_path = "extracted_ocr_chats.csv"
+        print("\n▶️ [STEP 1/5] PP-OCRv3 실시간 채팅 추출 시작 (별도 프로세스)...")
 
-        if self.use_ocr_subprocess:
-            print("\n▶️ [STEP 1/5] PP-OCRv3 실시간 채팅 추출 시작 (별도 프로세스)...")
+        worker_path = os.path.join(os.path.dirname(__file__), "ocr_worker_cli.py")
+        cmd = [sys.executable, worker_path, "--video", video_path, "--output", ocr_csv_path,
+               "--sample-rate", "5.0"]
+        if crop_box:
+            cmd += ["--crop-box", ",".join(str(x) for x in crop_box)]
 
-            worker_path = os.path.join(os.path.dirname(__file__), "ocr_worker_cli.py")
-            cmd = [sys.executable, worker_path, "--video", video_path, "--output", ocr_csv_path,
-                   "--sample-rate", "5.0"]
-            if crop_box:
-                cmd += ["--crop-box", ",".join(str(x) for x in crop_box)]
+        # [Windows 인코딩 문제 방지] 콘솔 기본 인코딩(한글 Windows는 보통
+        # cp949)으로는 이모지(🚀 등)를 표현할 수 없어서, 자식 프로세스가
+        # print()만 해도 UnicodeEncodeError로 죽습니다. 자식 프로세스의
+        # 표준출력 인코딩과 파이썬 자체 I/O 인코딩을 UTF-8로 강제합니다.
+        worker_env = os.environ.copy()
+        worker_env["PYTHONIOENCODING"] = "utf-8"
+        worker_env["PYTHONUTF8"] = "1"
 
-            # [Windows 인코딩 문제 방지] 콘솔 기본 인코딩(한글 Windows는 보통
-            # cp949)으로는 이모지(🚀 등)를 표현할 수 없어서, 자식 프로세스가
-            # print()만 해도 UnicodeEncodeError로 죽습니다. 자식 프로세스의
-            # 표준출력 인코딩과 파이썬 자체 I/O 인코딩을 UTF-8로 강제합니다.
-            worker_env = os.environ.copy()
-            worker_env["PYTHONIOENCODING"] = "utf-8"
-            worker_env["PYTHONUTF8"] = "1"
-
-            result = subprocess.run(
-                cmd, capture_output=True, text=True,
-                encoding="utf-8", errors="replace", env=worker_env,
-            )
-            # 워커 프로세스의 출력을 그대로 이어서 보여줘서, 기존 로그와
-            # 이어지는 것처럼 보이게 합니다 (Auto-ROI 탐지 로그, 프레임별
-            # 인식 로그 등이 그대로 여기 찍힙니다).
-            if result.stdout:
-                print(result.stdout, end="")
-            if result.returncode != 0:
-                print(result.stderr, file=sys.stderr)
-                raise RuntimeError(f"OCR 워커 프로세스 실패 (종료 코드 {result.returncode})")
-        else:
-            print("\n▶️ [STEP 1/5] PP-OCRv3 실시간 채팅 추출 시작 (같은 프로세스)...")
-            # ocr_worker_cli.py와 같은 인자로 호출합니다 (빈 crop_box는 None → Auto-ROI).
-            self.ocr_extractor.extract_chat_from_video(
-                video_path=video_path,
-                crop_box=tuple(crop_box) if crop_box else None,
-                sample_rate_sec=5.0,
-                output_csv_path=ocr_csv_path,
-            )
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", env=worker_env,
+        )
+        # 워커 프로세스의 출력을 그대로 이어서 보여줘서, 기존 로그와
+        # 이어지는 것처럼 보이게 합니다 (Auto-ROI 탐지 로그, 프레임별
+        # 인식 로그 등이 그대로 여기 찍힙니다).
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.returncode != 0:
+            print(result.stderr, file=sys.stderr)
+            raise RuntimeError(f"OCR 워커 프로세스 실패 (종료 코드 {result.returncode})")
 
         # ----------------------------------------------------
         # [Step 2] KoBERT 7대 감정 정량화 및 시계열 데이터셋 생성

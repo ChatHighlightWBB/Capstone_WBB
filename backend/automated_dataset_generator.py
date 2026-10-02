@@ -20,17 +20,6 @@ import numpy as np
 import pandas as pd
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-KOBERT_TOKENIZER_ID = "monologg/kobert"
-
-
-def load_kobert_tokenizer():
-    """monologg/kobert 토크나이저 로드: 로컬 HF 캐시 우선, 캐시에 없을 때만 다운로드"""
-    try:
-        return AutoTokenizer.from_pretrained(KOBERT_TOKENIZER_ID, trust_remote_code=True, local_files_only=True)
-    except Exception:
-        return AutoTokenizer.from_pretrained(KOBERT_TOKENIZER_ID, trust_remote_code=True)
-
-
 def apply_context_aware_sentiment_booster(chat_text: str, emotion_probs: np.ndarray) -> np.ndarray:
     """
     KoBERT가 예측한 7대 감정 확률에 스트리밍 특화 자음 및 문맥 규칙을 적용합니다.
@@ -93,15 +82,14 @@ class WBBEmotionDatasetGenerator:
     def __init__(self, model_dir: str = "./kobert_wbb_model"):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.labels = ['기쁨', '당황', '분노', '불안', '상처', '슬픔', '중립']
-
-        if os.path.exists(model_dir) and os.path.isdir(model_dir):
-            # 폴더에 저장된 토크나이저는 transformers 4.x에서 한국어를 [UNK]로 깨뜨리므로 monologg/kobert 사용
-            self.tokenizer = load_kobert_tokenizer()
-            self.model = AutoModelForSequenceClassification.from_pretrained(model_dir, num_labels=7)
-        else:
-            self.tokenizer = AutoTokenizer.from_pretrained("skt/kobert-base-v1", trust_remote_code=True)
-            self.model = AutoModelForSequenceClassification.from_pretrained("skt/kobert-base-v1", num_labels=7)
-
+        
+        try:
+            from tokenization_kobert import KoBERTTokenizer
+            self.tokenizer = KoBERTTokenizer.from_pretrained(model_dir)
+        except Exception:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
+            
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_dir, num_labels=7)
         self.model.to(self.device)
         self.model.eval()
 

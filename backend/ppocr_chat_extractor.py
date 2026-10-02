@@ -26,6 +26,7 @@
 
 import os
 import re
+import platform
 
 # [oneDNN/PIR 호환성 문제 방지] 일부 Windows 환경에서 최신 det 모델을
 # oneDNN 가속과 함께 쓸 때 "ConvertPirAttribute2RuntimeAttribute not
@@ -42,6 +43,15 @@ os.environ["FLAGS_use_mkldnn"] = "0"
 # Whisper/Demucs(torch)는 나중에 만들기 때문에, 여기서 torch를 미리 안
 # 불러오는 게 맞습니다.
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+# [2026-10 수정] Paddle 추론 엔진(C++)은 Windows에서 한글 등 비ASCII 경로의
+# 모델 파일을 못 엽니다 ("Cannot open file ...\.paddlex\...\inference.json").
+# 사용자 폴더 이름이 한글이면(C:\Users\고유찬) 기본 캐시 경로 ~/.paddlex가
+# 깨지므로, 그때는 ASCII 경로인 backend/models/paddlex_cache를 캐시로 씁니다.
+if "PADDLE_PDX_CACHE_HOME" not in os.environ and not os.path.expanduser("~").isascii():
+    os.environ["PADDLE_PDX_CACHE_HOME"] = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "models", "paddlex_cache"
+    )
 
 import cv2
 import pandas as pd
@@ -171,14 +181,33 @@ class WBBPPOCRExtractor:
         else:
             print("ℹ️ 파인튜닝된 모델을 찾지 못해 기본 사전학습 모델을 사용합니다.")
 
-        try:
-            print("🚀 GPU(device=\"gpu:0\")로 PaddleOCR 초기화를 시도합니다...")
-            self.ocr = PaddleOCR(**gpu_kwargs)
-            print("✅ PaddleOCR GPU 초기화 성공")
-        except Exception as e:
-            print(f"⚠️ GPU 초기화 실패({type(e).__name__}: {e}) — CPU로 폴백합니다.")
+        # [2026-10 수정] OCR 실행 장치 선택 (.env의 OCR_DEVICE)
+        #   cpu  : GPU를 아예 시도하지 않고 바로 CPU로 실행
+        #   gpu  : GPU로 먼저 시도하고, 실패하면 CPU로 폴백
+        #   auto : (기본값) Windows면 cpu, 그 외(Linux/Colab)면 gpu와 같음
+        #
+        # Windows에서 GPU 시도가 cudnn DLL 로딩 실패(WinError 127)로 끝나면,
+        # paddle 모듈이 "반쯤 로딩된" 상태로 남습니다. 그 상태에서 같은
+        # 프로세스 안에서 CPU로 다시 만들면 "partially initialized module
+        # 'paddle' has no attribute 'tensor' (circular import)"로 CPU까지
+        # 실패합니다. 그래서 Windows에서는 처음부터 GPU를 건드리지 않습니다.
+        device_pref = os.getenv("OCR_DEVICE", "auto").strip().lower()
+        if device_pref == "auto":
+            device_pref = "cpu" if platform.system() == "Windows" else "gpu"
+
+        if device_pref == "cpu":
+            print("🖥️ CPU로 PaddleOCR을 초기화합니다. (OCR_DEVICE=cpu 또는 Windows 기본값)")
             self.ocr = PaddleOCR(**cpu_kwargs)
             print("✅ PaddleOCR 모델 로딩 완료 (CPU)")
+        else:
+            try:
+                print("🚀 GPU(device=\"gpu:0\")로 PaddleOCR 초기화를 시도합니다...")
+                self.ocr = PaddleOCR(**gpu_kwargs)
+                print("✅ PaddleOCR GPU 초기화 성공")
+            except Exception as e:
+                print(f"⚠️ GPU 초기화 실패({type(e).__name__}: {e}) — CPU로 폴백합니다.")
+                self.ocr = PaddleOCR(**cpu_kwargs)
+                print("✅ PaddleOCR 모델 로딩 완료 (CPU)")
 
     # ------------------------------------------------------------------
     # [ai-nlp 브랜치에서 채택] Auto-ROI: crop_box를 영상마다 하드코딩하지 않고

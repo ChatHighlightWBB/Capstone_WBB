@@ -1,11 +1,18 @@
+import { Link, useNavigate } from "react-router-dom";
+
 export default function Footer() {
   const startYear = 2026; // 프로젝트 시작 연도
   const currentYear = new Date().getFullYear();
   const yearLabel = currentYear > startYear ? `${startYear}-${currentYear}` : `${startYear}`;
 
+  const navigate = useNavigate();
+
+  // 홈 화면이면 해당 섹션으로 스크롤, 다른 페이지(약관 등)면 홈으로 이동한 뒤 스크롤
   const scrollTo = (id) => (e) => {
     e.preventDefault();
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: "smooth" });
+    else navigate(`/#${id}`);
   };
 
   return (
@@ -50,8 +57,8 @@ export default function Footer() {
 
         <div className="footer-col">
           <h4>법적 고지</h4>
-          <span className="footer-muted">이용약관 (준비 중)</span>
-          <span className="footer-muted">개인정보처리방침 (준비 중)</span>
+          <Link to="/terms">이용약관</Link>
+          <Link to="/privacy">개인정보처리방침</Link>
         </div>
 
         <div className="footer-col">
@@ -67,7 +74,10 @@ export default function Footer() {
       </div>
 
       <div className="footer-bottom">
-        <span>© {yearLabel} 와바바(WBB). All rights reserved.</span>
+        <div className="footer-credit">
+          <span>신한대학교 소프트웨어융합학과 · 2026 캡스톤디자인 3조</span>
+          <span>© {yearLabel} 와바바(WBB). All rights reserved.</span>
+        </div>
         <span className="footer-status">
           <span className="footer-status-dot" />
           베타 운영 중

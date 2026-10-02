@@ -24,6 +24,8 @@ stage2_refinement.py, 클리핑은 ffmpeg_clipper.py가 이미 대체합니다.)
 """
 
 import os
+import glob
+import time
 import json
 import shutil
 import asyncio
@@ -155,29 +157,51 @@ async def cleanup_expired_jobs():
     로그인 없이 "일시적으로만 남는 내역"을 구현하기 위한 정리 작업입니다.
     MongoDB TTL 인덱스만 걸면 문서는 지워지지만 실제 mp4 파일은 그대로
     남아 디스크가 계속 찰 수 있어서, 문서와 파일을 한 곳에서 같이 지웁니다.
+
+    [수정] 예전에는 합친 요약 영상({video_id}_highlight.mp4)만 지우고
+    하이라이트별 개별 클립({video_id}_highlight_1.mp4 ...)은 남겼습니다.
+    이제 {video_id}_highlight*.mp4를 모두 지우고, DB 기록이 이미 없어진
+    채로 남아 있는 옛날 파일도 파일 수정 시각 기준으로 함께 정리합니다.
     """
     if db.db is None:
         return
+
+    def _remove(path: str) -> bool:
+        try:
+            os.remove(path)
+            return True
+        except OSError as e:
+            print(f"⚠️ [정리] {path} 삭제 실패: {e}")
+            return False
 
     cutoff = datetime.utcnow() - timedelta(hours=RETENTION_HOURS)
     expired_cursor = db.db["jobs"].find({"created_at": {"$lt": cutoff}})
 
     deleted_count = 0
+    removed_files = 0
     async for doc in expired_cursor:
         video_id = doc.get("video_id")
 
-        final_video_path = os.path.join(OUTPUT_DIR, f"{video_id}_highlight.mp4")
-        if os.path.exists(final_video_path):
-            try:
-                os.remove(final_video_path)
-            except OSError as e:
-                print(f"⚠️ [정리] {final_video_path} 삭제 실패: {e}")
+        # 합친 요약 영상 + 하이라이트별 개별 클립을 한 번에
+        if video_id:
+            for path in glob.glob(os.path.join(OUTPUT_DIR, f"{video_id}_highlight*.mp4")):
+                removed_files += _remove(path)
 
         await db.db["jobs"].delete_one({"_id": doc["_id"]})
         deleted_count += 1
 
-    if deleted_count:
-        print(f"🧹 [자동 정리] {RETENTION_HOURS}시간 경과한 작업 {deleted_count}건 삭제 완료")
+    # DB 문서 없이 남은 파일(이전 버전에서 못 지운 개별 클립 등)도 보관 시간이 지났으면 삭제
+    cutoff_ts = time.time() - RETENTION_HOURS * 3600
+    for path in glob.glob(os.path.join(OUTPUT_DIR, "*.mp4")):
+        try:
+            if os.path.getmtime(path) < cutoff_ts:
+                removed_files += _remove(path)
+        except OSError:
+            pass  # 그 사이 다른 곳에서 지워진 경우
+
+    if deleted_count or removed_files:
+        print(f"🧹 [자동 정리] {RETENTION_HOURS}시간 경과 — 작업 {deleted_count}건, "
+              f"영상 파일 {removed_files}개 삭제 완료")
 
 
 @asynccontextmanager

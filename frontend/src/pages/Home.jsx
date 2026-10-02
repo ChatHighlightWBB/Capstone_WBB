@@ -6,7 +6,9 @@ import Hero from "../components/Hero.jsx";
 import RecentHistory from "../components/RecentHistory.jsx";
 import HowItWorks from "../components/HowItWorks.jsx";
 import Features from "../components/Features.jsx";
+import BabaIntro from "../components/BabaIntro.jsx";
 import Footer from "../components/Footer.jsx";
+import WelcomeOverlay from "../components/WelcomeOverlay.jsx";
 import { startAnalysis, startAnalysisFromFile } from "../api.js";
 import { addToHistory } from "../history.js";
 
@@ -56,6 +58,7 @@ export default function Home() {
 
   return (
     <div className="app-shell">
+      <WelcomeOverlay />
       <Sidebar />
       <main className="app-main">
         <Topbar />
@@ -70,6 +73,7 @@ export default function Home() {
         </div>
         <HowItWorks />
         <Features />
+        <BabaIntro />
         <Footer />
       </main>
     </div>

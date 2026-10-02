@@ -9,6 +9,7 @@ import HighlightList from "../components/HighlightList.jsx";
 import DownloadPanel from "../components/DownloadPanel.jsx";
 import { pollResult } from "../api.js";
 import { getNotifyOnDone } from "../settingsStorage.js";
+import BabaSays from "../components/BabaSays.jsx";
 
 // 분석은 끝났지만 하이라이트가 0개일 때 (서버가 metadata.empty_reason으로 이유를 알려줌)
 const EMPTY_HIGHLIGHT_MESSAGE = {
@@ -17,6 +18,20 @@ const EMPTY_HIGHLIGHT_MESSAGE = {
   no_candidates:
     "채팅은 인식했지만 반응이 두드러진 구간을 찾지 못해 하이라이트를 만들지 않았어요.",
 };
+
+// 결과가 나왔을 때 바바의 한마디 (와바바 스코어 등급과 같은 기준: WbbScore.jsx)
+function babaReaction(highlights) {
+  const count = highlights.length;
+  const avg = highlights.reduce((sum, h) => sum + h.final_highlight_score, 0) / count;
+  const score = Math.round(avg);
+  if (score >= 80)
+    return { mood: "excited", text: `역대급 방송이에요! 하이라이트 ${count}개를 찾았어요. 감정 그래프의 ⭐ 와바바 포인트부터 확인해 보세요.` };
+  if (score >= 60)
+    return { mood: "excited", text: `재밌는 장면이 많았어요! 하이라이트 ${count}개를 골랐어요.` };
+  if (score >= 40)
+    return { mood: "happy", text: `잔잔한 방송이지만 반응이 모인 구간 ${count}개를 찾았어요.` };
+  return { mood: "happy", text: `차분한 방송이었어요. 그래도 시청자가 반응한 구간 ${count}개를 골랐어요.` };
+}
 
 export default function Result() {
   const { videoId } = useParams();
@@ -65,6 +80,8 @@ export default function Result() {
   const isInProgress = status && status !== "done" && status !== "failed";
   const hasNoHighlights = status === "done" && !result.highlight_result?.highlights?.length;
   const emptyReason = result?.highlight_result?.metadata?.empty_reason;
+  const highlights = result?.highlight_result?.highlights;
+  const reaction = status === "done" && highlights?.length ? babaReaction(highlights) : null;
 
   return (
     <div className="app-shell">
@@ -78,6 +95,13 @@ export default function Result() {
 
           {error && <div className="error-banner">⚠️ {error}</div>}
 
+          {(error || status === "failed") && (
+            <BabaSays mood="oops" className="result-baba">
+              분석 중에 문제가 생겼어요. <Link to="/help">오류 대처 방법</Link>에서 화면에 뜬 문구와
+              비슷한 항목을 찾아보세요.
+            </BabaSays>
+          )}
+
           {status === "failed" && (
             <div className="status-banner" data-status="failed">
               분석 실패{result.video_info.error && ` — ${result.video_info.error}`}
@@ -85,9 +109,9 @@ export default function Result() {
           )}
 
           {hasNoHighlights && (
-            <div className="status-banner">
+            <BabaSays mood="thinking" className="result-baba">
               {EMPTY_HIGHLIGHT_MESSAGE[emptyReason] ?? "하이라이트로 만들 구간을 찾지 못했어요."}
-            </div>
+            </BabaSays>
           )}
 
           {isInProgress && (
@@ -107,6 +131,14 @@ export default function Result() {
 
           {result?.highlight_result && (
             <div id="score-section">
+              {reaction && (
+                <BabaSays mood={reaction.mood} className="result-baba">
+                  {reaction.text}
+                  <span className="baba-says-sub">
+                    결과는 4시간 뒤 사라져요. 필요한 영상은 아래 다운로드에서 받아 두세요.
+                  </span>
+                </BabaSays>
+              )}
               <WbbScore highlights={result.highlight_result.highlights} />
             </div>
           )}

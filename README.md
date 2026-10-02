@@ -1,109 +1,92 @@
-# 🌊 와바바 (WBB) — Watch the Best Bit
+# 와바바(WBB) — 4개 zip 병합 결과
 
-> KoBERT와 PP-OCRv3를 활용한 멀티모달 분석 기반 스트리밍 하이라이트 요약 웹 플랫폼
-> A Multi-modal Streaming Highlight Summarization Web Platform using KoBERT and PP-OCRv3
+`frontend.zip`, `feature-backend.zip`, `feature-ai-nlp.zip`, `feature-ai-ocr.zip` 4개를
+검토해서 병합했습니다. 실제로 빌드/문법 검증까지 마쳤습니다.
 
-신한대학교 소프트웨어융합학과 2026년도 캡스톤 디자인 프로젝트
+## 각 zip에서 무엇을 가져왔나
 
-## 팀 소개
-
-| 역할 | 이름 |
-|---|---|
-| 팀장 / AI 파이프라인 | 송태섭 |
-| 팀원 / OCR·백엔드 | 김관식 |
-| 팀원 / 프론트엔드 | 고유찬 |
-
-## 이게 뭐 하는 서비스인가요
-
-몇 시간짜리 방송(유튜브·치지직·SOOP)을 그냥 다 보기엔 시간이 아깝잖아요. 채팅·화면·음성을 동시에 읽어서, **시청자가 진짜로 반응한 순간만** 자동으로 찾아 요약 영상으로 만들어드립니다.
-
-- 링크 넣거나 파일 올리기만 하면 끝, 회원가입도 편집도 필요 없음
-- 채팅창을 OCR로 직접 읽어서, 플랫폼 API 없이도 어떤 방송이든 동일하게 동작
-- 채팅(텍스트) + 화면 변화(시각) + 음성 에너지(청각)를 함께 분석해서 "진짜 하이라이트"만 골라냄
-
-## 핵심 기능
-
-### AI 분석 파이프라인 (5단계)
-
-| 단계 | 하는 일 | 사용 모델/도구 |
+| 소스 | 가져온 것 | 안 가져온 것 |
 |---|---|---|
-| 1 | 영상 프레임에서 채팅 텍스트 인식 | PP-OCRv3 (자체 파인튜닝) + Auto-ROI 자동 위치 탐지 |
-| 2 | 채팅 감정 분석 (7가지 감정) | KoBERT (자체 파인튜닝) |
-| 3 | 30초 슬라이딩 윈도우로 1차 하이라이트 후보 탐지 | 적응형 동적 임계점(Adaptive Threshold) |
-| 4 | 스트리머 발화 기반 2차 정밀 검증 | Demucs(보컬 분리) + Whisper(STT) + KoBERT |
-| 5 | 최종 하이라이트 클리핑 및 병합 | FFmpeg (무인코딩 Stream Copy) |
+| (기존 검증본, integration/e2e-working-v1과 동일) | 백엔드 전체 뼈대 — 버그 수정된 `server.py`, `highlight_pipeline.py`, Auto-ROI 병합된 `ppocr_chat_extractor.py` | — |
+| `feature-ai-ocr.zip` | **파인튜닝된 OCR 인식 모델** (`inference/wbb_rec/*` → `backend/models/wbb_rec/`), `wbb_chat_dict.txt` | `ai_model/ocr/ocr_test.py`는 `print()` 한 줄뿐이라 안 가져옴 |
+| `feature-ai-nlp.zip` | (참고만 함) | `ppocr_chat_extractor.py`가 구버전(`use_gpu` 버그, `.ocr()` 구API)이라 안 씀 — 검증본 유지 |
+| `feature-backend.zip` | (참고만 함) | 여전히 더미 로직, 죽은 코드(ocr_processor.py 등 4개 미사용) — 안 씀 |
+| `frontend.zip` | 프론트엔드 전체 (Footer 빼고) | `Footer.jsx`가 없어서 추가, `api.js`에 배포용 `API_BASE` 환경변수 처리가 없어서 교체 |
 
-### 웹 서비스 기능
+## 실제로 검증한 것
 
-- **실시간 진행 상황 표시**: 분석 중 화면에 현재 몇 단계인지, 얼마나 걸렸는지 실시간으로 표시
-- **결과 대시보드**: 와바바 스코어, 시간대별 감정 그래프("와바바 포인트" 하이라이트 마커 포함), 하이라이트별 개별 클립·채팅 로그
-- **다운로드**: 전체 요약 영상 또는 하이라이트별 개별 클립 다운로드
-- **최근 분석 내역**: 로그인 없이 브라우저에 최근 4시간 내 분석 기록 저장, video_id로 결과 페이지 바로가기
-- **설정**: 라이트/다크 모드, 채팅창 위치 드래그 지정(Auto-ROI 보정), 알림, 데이터 보관 기간 안내
-- **자동 데이터 삭제**: 로그인 없는 서비스 특성상, 4시간 지난 분석 결과는 자동으로 삭제
+- `backend/*.py` 전체 `python -m py_compile` 통과
+- `ppocr_chat_extractor.py`가 파인튜닝 모델을 실제로 찾아서 쓰는지 로직 시뮬레이션 통과
+- `npm run build` 성공 (프론트엔드 854개 모듈 정상 변환)
 
-## 기술 스택
+## 폴더 구조
 
-**Backend**: FastAPI, MongoDB(Motor), yt-dlp/Streamlink(다운로드), PaddleOCR, PyTorch, Whisper, Demucs, FFmpeg
-**Frontend**: React, Vite, React Router, Recharts
-**AI Models**: 자체 파인튜닝 KoBERT(감정 분석), 자체 파인튜닝 PP-OCRv3(한국어 채팅 인식)
+```
+backend/
+├── models/wbb_rec/          ← [신규] 파인튜닝된 OCR 인식 모델
+│   ├── inference.json
+│   ├── inference.pdiparams
+│   └── inference.yml
+├── wbb_chat_dict.txt         ← [신규] 파인튜닝 시 사용한 문자 사전
+├── ppocr_chat_extractor.py   ← [수정] 위 모델을 자동으로 찾아서 사용
+├── server.py                 ← (기존 검증본) 업로드 API, 4시간 자동삭제 스케줄러 포함
+├── highlight_pipeline.py     ← (기존 검증본) crop_box=None 기본값 (Auto-ROI)
+└── ... (나머지 파이프라인 파일 동일)
 
-## 프로젝트 구조
+frontend/
+├── src/components/Footer.jsx ← [신규 추가]
+├── src/api.js                ← [교체] VITE_API_BASE 환경변수 지원
+├── src/App.css                ← [추가] 푸터 스타일 병합
+└── ... (나머지 동일)
+```
 
-<pre> ```Capstone_WBB/
-├── backend/
-│ ├── server.py # FastAPI 서버, API 엔드포인트
-│ ├── highlight_pipeline.py # 5단계 파이프라인 오케스트레이션
-│ ├── ocr_worker_cli.py # OCR 전용 독립 실행 워커 (프로세스 격리)
-│ ├── ppocr_chat_extractor.py # Step 1: OCR 채팅 추출
-│ ├── automated_dataset_generator.py # Step 2: 감정 분석
-│ ├── sliding_window_nlp.py # Step 3: 1차 하이라이트 탐지
-│ ├── stage2_refinement.py # Step 4: Whisper+Demucs 정밀 검증
-│ ├── ffmpeg_clipper.py # Step 5: 영상 클리핑
-│ ├── chzzk_direct_downloader.py # 치지직 API 직접 다운로드 (yt-dlp 우회)
-│ ├── soop_direct_downloader.py # SOOP 브라우저 자동화 다운로드
-│ └── archive_data/ # KoBERT 학습용 라벨링 데이터
-└── frontend/
-└── src/
-├── pages/ # Home, Result, Settings
-└── components/ # Sidebar, Topbar, EmotionChart, HighlightCard 등 ``` </pre>
+## 아직 사용자가 직접 해야 할 것
 
+### 1. KoBERT 파인튜닝 모델 (용량 문제로 미포함)
 
-## 시작하기
+`backend/kobert_wbb_model/` 폴더에 직접 옮겨주세요:
+```
+config.json
+model.safetensors
+tokenizer.json
+tokenizer_config.json
+```
 
-### 백엔드
+### 2. `.env` 파일 생성
+
+```
+MONGODB_URL=mongodb://localhost:27017   (또는 Atlas 주소)
+DB_NAME=wbb_db
+KOBERT_MODEL_DIR=./kobert_wbb_model
+PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+RETENTION_HOURS=4
+```
+`CHAT_CROP_BOX`는 넣지 마세요 (Auto-ROI 자동 적용).
+
+### 3. 패키지 설치
 
 ```powershell
 cd backend
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
+pip install python-multipart soundfile apscheduler
 ```
 
-`.env` 파일 생성:
-MONGODB_URL=mongodb://localhost:27017
-DB_NAME=wbb_db
-KOBERT_MODEL_DIR=./kobert_wbb_model
-RETENTION_HOURS=4
-`kobert_wbb_model/`, `models/wbb_rec/`(파인튜닝된 모델)은 용량 문제로 git에 포함되지 않았습니다 — 별도로 전달받아 `backend/` 안에 배치해야 합니다.
+### 4. 실행 및 확인
 
 ```powershell
-.\run.ps1
+uvicorn server:app --reload --port 8000
 ```
 
-### 프론트엔드
-
-```powershell
-cd frontend
-npm install
-npm run dev
+로그에 이게 뜨면 파인튜닝 모델이 정상적으로 연결된 겁니다:
+```
+🎯 파인튜닝된 채팅 인식 모델(models/wbb_rec)을 사용합니다.
 ```
 
-## 알려진 제약사항
+## 병합하면서 발견한 것 — 팀 커뮤니케이션 확인 필요
 
-- **URL 자동 다운로드가 불안정합니다**: 유튜브(PO Token 정책 강화), 치지직(yt-dlp DASH 파서 버그), SOOP(streamlink가 VOD 미지원)이 각각 다른 이유로 자주 실패합니다. **파일 업로드 방식이 항상 안정적**이라 이쪽을 기본 경로로 권장합니다.
-- **GPU 가속(PaddleOCR)이 이 환경에서는 CPU로 동작**: paddlepaddle-gpu와 PyTorch(CUDA)를 같은 프로세스에서 동시에 쓸 때 Windows에서 DLL 충돌이 발생해, OCR은 CPU로 안정적으로 실행됩니다.
-
-## 라이선스
-
-신한대학교 소프트웨어융합학과 2026년도 캡스톤 디자인 프로젝트 3조
+`feature/ai-nlp`에 있던 `ppocr_chat_extractor.py`가 여전히 구버전(`use_gpu=False` 등 이미
+고쳤던 버그가 있는 상태)이었습니다. 즉 그 브랜치에서 작업하시는 분이 최신 통합 버전
+(`integration/e2e-working-v1`)의 존재를 모르고 계실 가능성이 있어요. 헛수고를 막으려면
+한 번 확인해보시는 걸 권합니다.

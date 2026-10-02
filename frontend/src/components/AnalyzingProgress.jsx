@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { extractYoutubeId } from "../youtubeUtils.js";
+import BabaSays from "./BabaSays.jsx";
 
 const STEP_LIST = [
   { n: 1, label: "채팅 텍스트 인식 (OCR)" },
@@ -13,6 +14,17 @@ const STEP_LIST = [
 const PRE_STEP_LABEL = {
   queued: "분석 대기 중...",
   downloading: "영상 다운로드 중...",
+};
+
+// 바바가 단계마다 하는 말 (진행 화면의 말풍선)
+const BABA_LINES = {
+  queued: "앞 분석이 끝나길 기다리고 있어요. 곧 차례가 와요!",
+  downloading: "영상을 내려받고 있어요~",
+  1: "영상을 5초마다 넘겨 보면서 채팅을 읽고 있어요~",
+  2: "채팅 하나하나에 담긴 감정을 분석하고 있어요~",
+  3: "시청자 반응이 몰린 구간을 찾고 있어요~",
+  4: "스트리머 목소리만 골라 듣고 있어요~",
+  5: "하이라이트 영상을 자르고 붙이고 있어요. 거의 다 왔어요!",
 };
 
 function useElapsedSeconds(active) {
@@ -48,6 +60,7 @@ export default function AnalyzingProgress({ status, step, totalSteps, stepLabel,
   const elapsed = useElapsedSeconds(true);
   const label = isPreStep ? PRE_STEP_LABEL[status] : (stepLabel || STEP_LIST[currentStep - 1]?.label);
   const youtubeId = sourceUrl ? extractYoutubeId(sourceUrl) : null;
+  const babaLine = BABA_LINES[isPreStep ? status : currentStep] ?? "열심히 분석하고 있어요~";
 
   return (
     <div className="analyzing-screen">
@@ -85,6 +98,14 @@ export default function AnalyzingProgress({ status, step, totalSteps, stepLabel,
         <span className="analyzing-spinner" aria-hidden="true" />
         분석 진행 중
       </div>
+
+      {/* 바바가 땀 흘리며 일하는 모습 + 지금 하는 일 */}
+      <BabaSays mood="working" size={96} className="analyzing-baba">
+        {babaLine}
+        {elapsed >= 180 && (
+          <span className="baba-says-sub">긴 영상은 몇 분 더 걸릴 수 있어요. 이 화면을 닫지 말고 기다려 주세요.</span>
+        )}
+      </BabaSays>
 
       <h2 className="analyzing-label">{label}</h2>
       <p className="analyzing-elapsed mono">경과 시간 {formatElapsed(elapsed)}</p>

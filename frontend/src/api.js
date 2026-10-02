@@ -8,7 +8,7 @@ export async function startAnalysis(videoUrl) {
   const cropBox = cropBoxToArray(); // 설정 페이지에서 수동으로 지정했으면 실어 보냄
   const res = await fetch(`${API_BASE}/api/v1/analyze`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ video_url: videoUrl, ...(cropBox ? { crop_box: cropBox } : {}) }),
   });
   if (!res.ok) {
@@ -18,21 +18,13 @@ export async function startAnalysis(videoUrl) {
   return res.json();
 }
 
-/**
- * cropBoxOverride: 업로드 화면에서 이번 분석에만 쓸 [ymin, xmin, ymax, xmax].
- * 넘기지 않으면(undefined) 설정 페이지에 저장된 값을, null이면 crop_box 없이(Auto-ROI) 보냅니다.
- */
-export async function startAnalysisFromFile(file, cropBoxOverride) {
+export async function startAnalysisFromFile(file) {
   const formData = new FormData();
   formData.append("file", file);
-  const cropBox = cropBoxOverride === undefined ? cropBoxToArray() : cropBoxOverride;
+  const cropBox = cropBoxToArray();
   if (cropBox) formData.append("crop_box", cropBox.join(","));
 
-  const res = await fetch(`${API_BASE}/api/v1/analyze-upload`, {
-    method: "POST",
-    headers: { "ngrok-skip-browser-warning": "true" },
-    body: formData,
-  });
+  const res = await fetch(`${API_BASE}/api/v1/analyze-upload`, { method: "POST", body: formData });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `업로드 실패 (HTTP ${res.status})`);
@@ -41,9 +33,7 @@ export async function startAnalysisFromFile(file, cropBoxOverride) {
 }
 
 export async function getResult(videoId) {
-  const res = await fetch(`${API_BASE}/api/v1/result/${videoId}`, {
-    headers: { "ngrok-skip-browser-warning": "true" },
-  });
+  const res = await fetch(`${API_BASE}/api/v1/result/${videoId}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `결과 조회 실패 (HTTP ${res.status})`);
@@ -53,9 +43,7 @@ export async function getResult(videoId) {
 
 /** 설정 페이지에서 보관 기간(RETENTION_HOURS) 등 서버 정보를 보여줄 때 씁니다. */
 export async function getServerInfo() {
-  const res = await fetch(`${API_BASE}/api/v1/info`, {
-    headers: { "ngrok-skip-browser-warning": "true" },
-  });
+  const res = await fetch(`${API_BASE}/`);
   if (!res.ok) throw new Error(`서버 정보 조회 실패 (HTTP ${res.status})`);
   return res.json();
 }
