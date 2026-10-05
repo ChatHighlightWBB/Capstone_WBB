@@ -92,13 +92,13 @@ class WBBAutoHighlightPipeline:
         print(f"🎬 [전체 파이프라인 자동 가동] 대상 영상: {video_path}")
         
         # ----------------------------------------------------
-        # [Step 1] 영상 프레임 내 채팅 OCR 추출 (PP-OCRv3)
+        # [Step 1] 영상 프레임 내 채팅 OCR 추출 (PaddleOCR)
         # ----------------------------------------------------
         _report(1)
         ocr_csv_path = "extracted_ocr_chats.csv"
 
         if self.use_ocr_subprocess:
-            print("\n▶️ [STEP 1/5] PP-OCRv3 실시간 채팅 추출 시작 (별도 프로세스)...")
+            print("\n▶️ [STEP 1/5] PaddleOCR 실시간 채팅 추출 시작 (별도 프로세스)...")
 
             worker_path = os.path.join(os.path.dirname(__file__), "ocr_worker_cli.py")
             cmd = [sys.executable, worker_path, "--video", video_path, "--output", ocr_csv_path,
@@ -127,7 +127,7 @@ class WBBAutoHighlightPipeline:
                 print(result.stderr, file=sys.stderr)
                 raise RuntimeError(f"OCR 워커 프로세스 실패 (종료 코드 {result.returncode})")
         else:
-            print("\n▶️ [STEP 1/5] PP-OCRv3 실시간 채팅 추출 시작 (같은 프로세스)...")
+            print("\n▶️ [STEP 1/5] PaddleOCR 실시간 채팅 추출 시작 (같은 프로세스)...")
             # ocr_worker_cli.py와 같은 인자로 호출합니다 (빈 crop_box는 None → Auto-ROI).
             self.ocr_extractor.extract_chat_from_video(
                 video_path=video_path,
