@@ -364,7 +364,8 @@ def detect_platform(url_str: str) -> str:
 def build_download_command(platform: str, video_url: str, output_path: str) -> str:
     """
     분석용으로 지나치게 고화질을 받을 필요는 없지만, 'worst'는 채팅 글씨가
-    안 보일 정도로 낮아서 480p 캡 정도로 절충합니다.
+    안 보일 정도로 낮아서 해상도 상한을 둡니다. 유튜브는 720p, 치지직·SOOP는
+    480p 상한입니다.
 
     [주의] 아래 두 실험은 "확실한 해결책"이 아니라 "밑져야 본전인 시도"입니다.
     유튜브/치지직 문제 모두 yt-dlp 라이브러리 자체의 최신 이슈라 100% 보장은
@@ -375,11 +376,11 @@ def build_download_command(platform: str, video_url: str, output_path: str) -> s
         # 영상+음성 통합 포맷(format 18)도 대부분 사라져서 "best[...]"는
         # "Requested format is not available"로 실패합니다.
         # → 기본 클라이언트 + node(JS 챌린지)로 HLS 영상/음성을 따로 받아 병합.
-        # -S "res:480"은 짧은 변 기준이라 가로 854x480, Shorts 480x854가 됩니다.
-        # (360p는 채팅 글씨가 작아 OCR이 놓치는 경우가 있어 480으로 올림)
+        # -S "res:720"은 짧은 변 기준이라 가로 1280x720, Shorts 720x1280이 됩니다.
+        # (480p는 채팅 글씨가 작아 OCR 오류가 많아서 720으로 올림)
         return (
             f'"{YTDLP_BIN}" --js-runtimes node '
-            f'-f "bv*[protocol^=m3u8]+ba[protocol^=m3u8]/bv*+ba/b" -S "res:480" '
+            f'-f "bv*[protocol^=m3u8]+ba[protocol^=m3u8]/bv*+ba/b" -S "res:720" '
             f'--merge-output-format mp4 '
             f'--no-check-certificates --no-mtime -o "{output_path}" "{video_url}"'
         )
@@ -567,7 +568,8 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
 
     finally:
         PROGRESS.pop(video_id, None)
-        # 디스크 정리 (원본/480p 임시 파일만 삭제, 결과물은 outputs/에 보존)
+        # 디스크 정리 (다운로드한 임시 파일만 삭제, 결과물은 outputs/에 보존)
+        # 파일 이름의 _480p는 예전 이름 그대로이며, 유튜브는 실제로 720p입니다.
         if os.path.exists(output_path):
             try:
                 os.remove(output_path)
