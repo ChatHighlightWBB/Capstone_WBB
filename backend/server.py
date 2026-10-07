@@ -8,7 +8,7 @@
   (highlight_pipeline.WBBAutoHighlightPipeline)을 그대로 재사용합니다.
 
 [핵심 변경점]
-기존 backend/main.py의 sync_pipeline_core_runner()는 KoBERT/PP-OCRv3/Demucs/Whisper를
+기존 backend/main.py의 sync_pipeline_core_runner()는 KoBERT/PaddleOCR/Demucs/Whisper를
 전혀 쓰지 않고 하드코딩된 더미 채팅("와바바","대박","ㅋㅋㅋㅋ")과
 "채팅 0.4 + 오디오 0.3 + 비전 0.3" 고정 가중치로만 결과를 만들어내고 있었습니다.
 
@@ -87,7 +87,7 @@ class Database:
 
 db = Database()
 
-# AI 파이프라인은 모델 로딩 비용이 크므로(KoBERT + PP-OCRv3) 서버 시작 시 1회만 로드합니다.
+# AI 파이프라인은 모델 로딩 비용이 크므로(KoBERT + PaddleOCR) 서버 시작 시 1회만 로드합니다.
 pipeline: Optional[WBBAutoHighlightPipeline] = None
 
 # video_id -> {"step": int, "total_steps": int, "label": str}
@@ -214,7 +214,7 @@ async def lifespan(app: FastAPI):
     ANALYSIS_LOCK = asyncio.Lock()  # 실행 중인 uvicorn 루프 안에서 생성 (위 ANALYSIS_LOCK 주석 참고)
 
     try:
-        print("🚀 [WBB AI] KoBERT + PP-OCRv3 + Demucs + Whisper 파이프라인 로딩 중...")
+        print("🚀 [WBB AI] KoBERT + PaddleOCR + Demucs + Whisper 파이프라인 로딩 중...")
         pipeline = WBBAutoHighlightPipeline(model_dir=KOBERT_MODEL_DIR)
         print("✅ [WBB AI] 파이프라인 로딩 완료. 분석 요청을 받을 준비가 되었습니다.")
     except Exception as e:
@@ -240,7 +240,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="와바바 (WBB) API 서버",
-    description="KoBERT와 PP-OCRv3를 활용한 멀티모달 분석 기반 스트리밍 하이라이트 요약 플랫폼 API",
+    description="KoBERT와 PaddleOCR 채팅 인식을 활용한 멀티모달 분석 기반 스트리밍 하이라이트 요약 플랫폼 API",
     version="2.0.0",
     lifespan=lifespan,
 )

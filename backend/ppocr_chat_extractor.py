@@ -1,6 +1,6 @@
 """
 =============================================================================
-[와바바(WBB)] 1단계: PP-OCRv3 텍스트 밀도 기반 Auto-ROI 자동 채팅 추출기
+[와바바(WBB)] 1단계: PaddleOCR 텍스트 밀도 기반 Auto-ROI 자동 채팅 추출기
 - 담당: 송태섭(Auto-ROI 자동 탐지, Windows DLL 충돌 방지) +
         고유찬(PaddleOCR 3.x API 대응, 디버그 이미지 덤프)
 - 두 브랜치(feature/ai-nlp, integration/e2e-working-v1)의 작업을 병합했습니다.
@@ -116,7 +116,7 @@ def is_quality_korean_line(text: str, threshold: float = QUALITY_THRESHOLD) -> b
 
 class WBBPPOCRExtractor:
     def __init__(self):
-        print("🚀 [PP-OCRv3] 한국어 문자 인식 모델 로딩 중...")
+        print("🚀 [PaddleOCR] 한국어 채팅 인식 모델 로딩 중...")
 
         # [feature/ai-ocr 브랜치에서 채택] 파인튜닝된 인식(rec) 모델 연결
         # models/wbb_rec/ 가 있으면 그걸 쓰고, 없으면(아직 파인튜닝 전 환경)
@@ -286,9 +286,9 @@ class WBBPPOCRExtractor:
 
     def _preprocess_chat_image(self, cropped_bgr: np.ndarray) -> np.ndarray:
         """
-        이진화 대신 CLAHE로 대비만 개선합니다. PP-OCRv3는 CRNN 기반이라
-        자연스러운 회색조 그라데이션으로 학습돼 있어, 강제 이진화는
-        얇은 한글 획을 뭉개 오히려 인식률을 떨어뜨립니다.
+        이진화 대신 CLAHE로 대비만 개선합니다. 강제 이진화는 얇은 한글
+        획을 뭉개 오히려 인식률을 떨어뜨리므로, 회색조 그라데이션은
+        그대로 살려 둡니다.
 
         [중요] CLAHE는 흑백(단일 채널) 이미지만 반환하는데, PaddleX 파이프라인은
         항상 3채널(H, W, 3) BGR 이미지를 기대합니다. 흑백을 그대로 넘기면
