@@ -115,7 +115,7 @@ export default function Settings() {
             <p className="settings-desc">
               평소엔 자동으로 채팅창 위치를 찾아요(Auto-ROI). 특정 방송에서 위치를 잘못
               잡을 때만, 방송 화면 스크린샷을 올려서 채팅창 영역을 직접 드래그로
-              지정할 수 있어요. 다음 분석부터 그 위치를 고정해서 씁니다.
+              지정할 수 있어요. 다음 업로드 분석부터 그 위치를 기본으로 씁니다(유튜브 링크는 항상 자동으로 찾아요).
             </p>
 
             <label className="settings-file-btn">
@@ -160,7 +160,7 @@ export default function Settings() {
 
             <div className="settings-inline-actions">
               <span className={`cropbox-status ${isCustomCropBox ? "active" : ""}`}>
-                {isCustomCropBox ? "🔧 수동 좌표 사용 중" : "🤖 자동 탐지(Auto-ROI) 사용 중"}
+                {isCustomCropBox ? "🔧 업로드 기본 좌표 저장됨 (유튜브 링크는 항상 자동 탐지)" : "🤖 자동 탐지(Auto-ROI) 사용 중"}
               </span>
               {isCustomCropBox && (
                 <button type="button" className="settings-text-btn" onClick={resetCropBox}>

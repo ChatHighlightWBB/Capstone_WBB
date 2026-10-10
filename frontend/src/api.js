@@ -5,11 +5,11 @@ import { cropBoxToArray } from "./settingsStorage.js";
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 
 export async function startAnalysis(videoUrl) {
-  const cropBox = cropBoxToArray(); // 설정 페이지에서 수동으로 지정했으면 실어 보냄
+  // 유튜브 링크는 항상 서버 자동 탐지(Auto-ROI)를 쓴다. 저장된 수동 좌표는 업로드 화면에서만 쓴다.
   const res = await fetch(`${API_BASE}/api/v1/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ video_url: videoUrl, ...(cropBox ? { crop_box: cropBox } : {}) }),
+    body: JSON.stringify({ video_url: videoUrl }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
