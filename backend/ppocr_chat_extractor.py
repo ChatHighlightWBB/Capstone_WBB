@@ -177,6 +177,8 @@ class WBBPPOCRExtractor:
         if os.path.isdir(finetuned_rec_dir):
             gpu_kwargs["text_recognition_model_dir"] = finetuned_rec_dir
             cpu_kwargs["text_recognition_model_dir"] = finetuned_rec_dir
+            gpu_kwargs["text_recognition_model_name"] = "korean_PP-OCRv3_mobile_rec"  # 튜닝 모델은 PP-OCRv3 구조라 이름을 맞춤
+            cpu_kwargs["text_recognition_model_name"] = "korean_PP-OCRv3_mobile_rec"  # 튜닝 모델은 PP-OCRv3 구조라 이름을 맞춤
             print("🎯 파인튜닝된 채팅 인식 모델(models/wbb_rec)을 사용합니다.")
         else:
             print("ℹ️ 파인튜닝된 모델을 찾지 못해 기본 사전학습 모델을 사용합니다.")
