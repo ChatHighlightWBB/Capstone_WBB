@@ -303,9 +303,9 @@ class EmotionTimePoint(BaseModel):
     joy_pct: float
     embarrass_pct: float
     anger_pct: float
-    anxiety_pct: float
-    hurt_pct: float
-    sadness_pct: float
+    sadness_pct: float = 0.0
+    disgust_pct: float = 0.0
+    fear_pct: float = 0.0
     neutral_pct: float
 
 

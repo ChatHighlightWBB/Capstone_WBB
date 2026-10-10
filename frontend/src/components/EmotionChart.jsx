@@ -19,8 +19,8 @@ const EMOTION_LINES = [
   { key: "joy_pct", label: "기쁨" },
   { key: "anger_pct", label: "분노" },
   { key: "embarrass_pct", label: "당황" },
-  { key: "anxiety_pct", label: "불안" },
   { key: "sadness_pct", label: "슬픔" },
+  { key: "fear_pct", label: "공포" },
 ];
 
 // [버그 수정] timestamp는 프레임 계산 과정에서 생긴 부동소수점 오차가
@@ -65,7 +65,7 @@ export default function EmotionChart({ timeSeriesData, recommendedJoyThreshold, 
             ⓘ
             {showHelp && (
               <span className="chart-help-tooltip">
-                채팅에서 인식한 시청자 반응을 기쁨·분노·당황·불안·슬픔 5가지로
+                채팅에서 인식한 시청자 반응을 기쁨·분노·당황·슬픔·공포 5가지로
                 나눠 시간대별 비율(%)로 보여줘요. ⭐ 표시는 채팅 반응이
                 가장 뜨거웠던 "와바바 포인트"예요.
               </span>

@@ -34,7 +34,7 @@ class WBBStage2Refinement:
     def __init__(self, model_dir: str = "./kobert_wbb_model"):
         print("🧠 [1/3] 2차 검증용 KoBERT 및 Whisper STT 모델 로딩 중...")
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.emotion_labels = ["기쁨", "당황", "분노", "불안", "상처", "슬픔", "중립"]
+        self.emotion_labels = ["기쁨", "당황", "분노", "슬픔", "혐오", "공포", "중립"]
 
         if os.path.exists(model_dir) and os.path.isdir(model_dir):
             # 폴더에 저장된 토크나이저는 transformers 4.x에서 한국어를 [UNK]로 깨뜨리므로 monologg/kobert 사용

@@ -4,7 +4,7 @@ export const EMOTION_COLORS = {
   기쁨: "#FF8A3D",
   분노: "#E5484D",
   당황: "#8C6FFF",
-  불안: "#4C9AFF",
+  공포: "#4C9AFF",
   슬픔: "#5B8DB8",
   혐오: "#4FAE7A",
   중립: "#6B6478",
@@ -12,11 +12,11 @@ export const EMOTION_COLORS = {
 
 export const EMOTION_FIELD_COLORS = {
   joy_pct: EMOTION_COLORS["기쁨"],
-  anger_pct: EMOTION_COLORS["분노"],
   embarrass_pct: EMOTION_COLORS["당황"],
-  anxiety_pct: EMOTION_COLORS["불안"],
+  anger_pct: EMOTION_COLORS["분노"],
   sadness_pct: EMOTION_COLORS["슬픔"],
-  hurt_pct: EMOTION_COLORS["혐오"],
+  disgust_pct: EMOTION_COLORS["혐오"],
+  fear_pct: EMOTION_COLORS["공포"],
   neutral_pct: EMOTION_COLORS["중립"],
 };
 

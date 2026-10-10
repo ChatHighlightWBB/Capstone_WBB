@@ -34,7 +34,7 @@ def load_kobert_tokenizer():
 def apply_context_aware_sentiment_booster(chat_text: str, emotion_probs: np.ndarray) -> np.ndarray:
     """
     KoBERT가 예측한 7대 감정 확률에 스트리밍 특화 자음 및 문맥 규칙을 적용합니다.
-    라벨 매핑: 0:기쁨, 1:당황, 2:분노, 3:불안, 4:상처, 5:슬픔, 6:중립
+    라벨 매핑: 0:기쁨, 1:당황, 2:분노, 3:슬픔, 4:혐오, 5:공포, 6:중립
     """
     probs = np.copy(emotion_probs)
     text = str(chat_text).strip()
@@ -73,7 +73,7 @@ def apply_context_aware_sentiment_booster(chat_text: str, emotion_probs: np.ndar
         
     if sad_count >= 2 and not has_positive:
         boost_sad = min(0.45, 0.15 * sad_count)
-        probs[5] += boost_sad
+        probs[3] += boost_sad
         probs[6] = max(0.01, probs[6] - boost_sad)
 
     if surprise_count >= 2 and not has_negative:
@@ -92,7 +92,7 @@ class WBBEmotionDatasetGenerator:
     """
     def __init__(self, model_dir: str = "./kobert_wbb_model"):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.labels = ['기쁨', '당황', '분노', '불안', '상처', '슬픔', '중립']
+        self.labels = ['기쁨', '당황', '분노', '슬픔', '혐오', '공포', '중립']
 
         if os.path.exists(model_dir) and os.path.isdir(model_dir):
             # 폴더에 저장된 토크나이저는 transformers 4.x에서 한국어를 [UNK]로 깨뜨리므로 monologg/kobert 사용
@@ -175,9 +175,9 @@ class WBBEmotionDatasetGenerator:
                 "joy_pct": round(joy_pct, 2),
                 "embarrass_pct": round(float(probs[1] * 100.0), 2),
                 "anger_pct": round(float(probs[2] * 100.0), 2),
-                "anxiety_pct": round(float(probs[3] * 100.0), 2),
-                "hurt_pct": round(float(probs[4] * 100.0), 2),
-                "sadness_pct": round(float(probs[5] * 100.0), 2),
+                "sadness_pct": round(float(probs[3] * 100.0), 2),
+                "disgust_pct": round(float(probs[4] * 100.0), 2),
+                "fear_pct": round(float(probs[5] * 100.0), 2),
                 "neutral_pct": round(float(probs[6] * 100.0), 2)
             }
             results_list.append(record)
