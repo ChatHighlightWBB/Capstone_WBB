@@ -160,7 +160,7 @@ export default function Settings() {
 
             <div className="settings-inline-actions">
               <span className={`cropbox-status ${isCustomCropBox ? "active" : ""}`}>
-                {isCustomCropBox ? "🔧 수동 좌표 사용 중" : "🤖 자동 탐지(Auto-ROI) 사용 중"}
+                {isCustomCropBox ? "🔧 업로드 기본 좌표 저장됨 (유튜브 링크는 항상 자동 탐지)" : "🤖 자동 탐지(Auto-ROI) 사용 중"}
               </span>
               {isCustomCropBox && (
                 <button type="button" className="settings-text-btn" onClick={resetCropBox}>
