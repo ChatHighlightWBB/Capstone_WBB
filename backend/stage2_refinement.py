@@ -30,6 +30,28 @@ def load_kobert_tokenizer():
         return AutoTokenizer.from_pretrained(KOBERT_TOKENIZER_ID, trust_remote_code=True)
 
 
+def _collapse_repeats(text, max_repeat=3):
+    """
+    Whisper가 같은 단어를 끝없이 반복하는 경우("아이고 아이고 아이고 ...")를 정리합니다.
+    공백으로 나눈 단어 기준으로, 앞뒤 문장부호를 뺀 같은 단어가 연달아 max_repeat 번을
+    넘게 나오면 max_repeat 번까지만 남깁니다. (반복이 감정 분석과 화면 표시를 망치지 않게)
+    """
+    punct = ".,!?~…·'\"()[]{}<>-:;"
+    result = []
+    prev_key = None
+    run = 0
+    for word in text.split():
+        key = word.strip(punct) or word  # 문장부호만 있는 단어는 그대로 비교
+        if key == prev_key:
+            run += 1
+        else:
+            prev_key = key
+            run = 1
+        if run <= max_repeat:
+            result.append(word)
+    return " ".join(result)
+
+
 class WBBStage2Refinement:
     def __init__(self, model_dir: str = "./kobert_wbb_model"):
         print("🧠 [1/3] 2차 검증용 KoBERT 및 Whisper STT 모델 로딩 중...")
@@ -164,8 +186,12 @@ class WBBStage2Refinement:
             clean_vocals_path = self._separate_vocals_demucs(raw_wav_path, temp_audio_dir)
 
             # 3. 분리된 목소리 트랙으로 Whisper STT 수행
-            stt_result = self.whisper_model.transcribe(clean_vocals_path, language="ko")
+            # condition_on_previous_text=False, temperature=0: 이전 문장에 끌려가 외국어가 섞이는 현상을 줄입니다.
+            # 10-11 게임 방송 4구간 시험에서 외국 문자 15.9% → 0%, 시간 87초 → 27초.
+            stt_result = self.whisper_model.transcribe(clean_vocals_path, language="ko",
+                                                       condition_on_previous_text=False, temperature=0)
             spoken_text = stt_result.get("text", "").strip()
+            spoken_text = _collapse_repeats(spoken_text)
 
             # 4. 발화 감정 분석
             emotion_res = self.analyze_streamer_speech_emotion(spoken_text)
