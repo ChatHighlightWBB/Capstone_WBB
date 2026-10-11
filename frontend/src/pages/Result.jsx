@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from "react";
 import Sidebar from "../components/Sidebar.jsx";
 import Topbar from "../components/Topbar.jsx";
 import AnalyzingProgress from "../components/AnalyzingProgress.jsx";
-import WbbScore from "../components/WbbScore.jsx";
+import WbbScore, { computeWbbScore } from "../components/WbbScore.jsx";
 import EmotionChart from "../components/EmotionChart.jsx";
 import HighlightList from "../components/HighlightList.jsx";
 import DownloadPanel from "../components/DownloadPanel.jsx";
@@ -20,10 +20,9 @@ const EMPTY_HIGHLIGHT_MESSAGE = {
 };
 
 // 결과가 나왔을 때 바바의 한마디 (와바바 스코어 등급과 같은 기준: WbbScore.jsx)
-function babaReaction(highlights) {
+function babaReaction(highlights, timeSeriesData) {
   const count = highlights.length;
-  const avg = highlights.reduce((sum, h) => sum + h.final_highlight_score, 0) / count;
-  const score = Math.round(avg);
+  const score = Math.round(computeWbbScore(highlights, timeSeriesData));
   if (score >= 80)
     return { mood: "excited", text: `역대급 방송이에요! 하이라이트 ${count}개를 찾았어요. 감정 그래프의 ⭐ 와바바 포인트부터 확인해 보세요.` };
   if (score >= 60)
@@ -81,7 +80,9 @@ export default function Result() {
   const hasNoHighlights = status === "done" && !result.highlight_result?.highlights?.length;
   const emptyReason = result?.highlight_result?.metadata?.empty_reason;
   const highlights = result?.highlight_result?.highlights;
-  const reaction = status === "done" && highlights?.length ? babaReaction(highlights) : null;
+  const reaction = status === "done" && highlights?.length
+    ? babaReaction(highlights, result.emotion_timeseries?.time_series_data)
+    : null;
 
   return (
     <div className="app-shell">
@@ -135,11 +136,14 @@ export default function Result() {
                 <BabaSays mood={reaction.mood} className="result-baba">
                   {reaction.text}
                   <span className="baba-says-sub">
-                    결과는 4시간 뒤 사라져요. 필요한 영상은 아래 다운로드에서 받아 두세요.
+                    필요한 영상은 아래 다운로드에서 받아 두세요.
                   </span>
                 </BabaSays>
               )}
-              <WbbScore highlights={result.highlight_result.highlights} />
+              <WbbScore
+                highlights={result.highlight_result.highlights}
+                timeSeriesData={result.emotion_timeseries?.time_series_data}
+              />
             </div>
           )}
           {result?.final_video_url && (
