@@ -134,11 +134,30 @@ class WBBAutoHighlightPipeline:
         _report(3)
         stage1_json_path = "stage1_candidates.json"
         print("\n▶️ [STEP 3/5] 30초 Sliding Window 1차 하이라이트 후보 탐지...")
+
+        # [채팅+음성 융합] AUDIO_FUSION 환경변수: 없거나 "on" 이면 켜짐, "off" 면 꺼짐.
+        # 켜짐이면 스트리머 목소리 크기(1초 dB)를 구해 1차 후보 점수에 섞습니다.
+        # 음량 계산이 실패해도 분석 전체가 멈추지 않게 채팅 단독으로 진행합니다.
+        audio_db_per_sec = None
+        if os.getenv("AUDIO_FUSION", "on").strip().lower() != "off":
+            try:
+                from audio_energy import compute_loudness_per_sec
+                audio_start = time.time()
+                audio_db_per_sec = compute_loudness_per_sec(video_path, voice_band=True)
+                if not audio_db_per_sec:  # 오디오 트랙이 없는 영상 등
+                    raise ValueError("음량 값이 0개입니다(오디오 트랙 없음?)")
+                print(f" ➔ 목소리 음량 계산 완료: {len(audio_db_per_sec)}초 분량 "
+                      f"({time.time() - audio_start:.1f}초 소요)")
+            except Exception as e:
+                print(f"⚠️ 음량 계산 실패 → 채팅 단독으로 진행: {e}")
+                audio_db_per_sec = None
+
         detector = WBBSlidingWindowDetector(json_path=emotion_json_path)
         stage1_candidates = detector.detect_candidate_windows(
             window_size=30.0,
             step_size=5.0,
-            output_json=stage1_json_path
+            output_json=stage1_json_path,
+            audio_db_per_sec=audio_db_per_sec
         )
 
         final_candidates_json = "final_highlight_candidates.json"
