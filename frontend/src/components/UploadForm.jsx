@@ -80,7 +80,7 @@ export default function UploadForm({ onSubmit, onFileSubmit, disabled }) {
         <input
           id="url-input"
           type="url"
-          placeholder="유튜브, 치지직, SOOP TV 링크를 붙여넣으세요"
+          placeholder="유튜브 링크를 붙여넣으세요"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           disabled={disabled}
