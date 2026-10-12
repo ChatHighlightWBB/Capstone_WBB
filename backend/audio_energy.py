@@ -17,6 +17,10 @@ VOICE_FILTER = "highpass=f=300,lowpass=f=3400"  # 목소리 대역 필터(배경
 def compute_loudness_per_sec(video_path, voice_band=False):
     """1초마다 음량(dBFS)을 계산해 리스트로 돌려준다. 전체를 메모리에 올리지 않고 1초씩 흘려 읽는다.
     voice_band=True 면 목소리 대역(300~3400Hz)만 남기고 계산한다."""
+    # 계획서의 Librosa RMS 에너지 산출. 소리 읽기는 긴 방송 메모리 문제로 FFmpeg 로 1초씩 흘려 읽음
+    # (librosa 는 무거워서 서버 시작이 느려지지 않게 함수 안에서 import)
+    import librosa
+
     # ffmpeg 는 stage2_refinement.py 와 같이 PATH 의 "ffmpeg" 를 부릅니다.
     cmd = ["ffmpeg", "-v", "error", "-i", video_path, "-vn"]
     if voice_band:
@@ -38,7 +42,9 @@ def compute_loudness_per_sec(video_path, voice_band=False):
                 break
             buf = buf[: len(buf) - (len(buf) % 2)]
             samples = np.frombuffer(buf, dtype=np.int16).astype(np.float64) / 32768.0
-            rms = float(np.sqrt(np.mean(samples * samples)))
+            # 1초 배열 전체를 프레임 하나로 보고 librosa.feature.rms 로 RMS 1개를 구한다
+            n = len(samples)
+            rms = float(librosa.feature.rms(y=samples, frame_length=n, hop_length=n, center=False)[0, 0])
             db = 20.0 * np.log10(rms) if rms > 0 else SILENCE_DB
             result.append(max(float(db), SILENCE_DB))
             if len(buf) < chunk_bytes:  # 마지막 조각(1초 미만)
