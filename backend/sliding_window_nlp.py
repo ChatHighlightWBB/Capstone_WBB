@@ -24,6 +24,14 @@ FUSION_W_VISUAL = 0.05  # 화면 점수 비중 (채팅 비중 = FUSION_W_CHAT - 
 VIS_LOW = 50.0          # 창 중간값이 이 이하면 화면 점수 0
 VIS_HIGH = 90.0         # 이 이상이면 화면 점수 1 (사이는 비례)
 
+# ==============================================================================
+# [클립 길이 상한] 겹치는 창을 합치면 5분이 넘는 후보가 생겨, 2차 선별(최대 10개·합계 900초)에서
+# 긴 후보 몇 개가 시간을 다 차지합니다. 합친 구간이 상한을 넘으면 그 안에서 창 점수 평균이
+# 가장 높은 상한 길이 구간 하나만 남깁니다(쪼개지 않음: 쪼개면 붙은 클립 두 개가 중복처럼 뽑힘).
+# 환경변수 CLIP_MAX_SEC 로 바꿀 수 있고, 0 이하면 상한 없음.
+# ==============================================================================
+CLIP_MAX_SEC_DEFAULT = 90.0  # 제안서의 "1차 후보 클립 1~2분", 태섭 확인 10-12
+
 class WBBSlidingWindowDetector:
     """
     [설명]
@@ -96,8 +104,25 @@ class WBBSlidingWindowDetector:
         else:
             raw_candidates = self._chat_raw_candidates(df, window_size, step_size)
 
+        # [클립 길이 상한] 상한 값: CLIP_MAX_SEC 환경변수가 있으면 그 값(잘못된 값이면 기본값), 0 이하면 상한 없음
+        max_sec = CLIP_MAX_SEC_DEFAULT
+        env_max = os.getenv("CLIP_MAX_SEC")
+        if env_max is not None:
+            try:
+                max_sec = float(env_max)
+                if not math.isfinite(max_sec):
+                    max_sec = CLIP_MAX_SEC_DEFAULT
+            except ValueError:
+                max_sec = CLIP_MAX_SEC_DEFAULT
+        # 아래 병합이 창 dict 를 직접 고쳐 쓰므로, 상한 계산에 쓸 합치기 전 창 목록을 미리 복사해 둡니다.
+        raw_windows = [dict(c) for c in raw_candidates]
+
         # 1. 겹치는 윈도우 구간 병합
         merged_candidates = self._merge_overlapping_intervals(raw_candidates)
+
+        # 1-1. 합친 구간이 상한보다 길면 점수가 가장 높은 상한 길이 구간 하나로 줄임 (채팅 단독·융합 공통)
+        if max_sec > 0:
+            merged_candidates = self._cap_long_intervals(merged_candidates, raw_windows, max_sec, step_size)
 
         # 2. 1차 후보 개수 제한 (2차 정밀 검증 부하 방지를 위해 상위 max_stage1_candidates개 선별)
         sorted_by_score = sorted(merged_candidates, key=lambda x: x["window_score"], reverse=True)
@@ -244,6 +269,58 @@ class WBBSlidingWindowDetector:
 
         print(f" ➔ 융합 임계점: {fusion_threshold * 100:.2f} | 넘은 창: {len(raw_candidates)}/{n}개")
         return raw_candidates, round(fusion_threshold * 100, 2)
+
+    def _cap_long_intervals(self, merged, raw_candidates, max_sec, step_size):
+        """
+        [클립 길이 상한] 합친 구간(merged) 중 duration 이 max_sec 를 넘는 것은,
+        그 안의 합치기 전 창(raw_candidates)들로 길이 max_sec 구간을 step_size 씩 옮겨 보며
+        [s, s+max_sec] 안에 완전히 들어가는 창들의 window_score 평균이 가장 큰 위치 하나만 남깁니다
+        (같으면 앞쪽, 끝은 원래 구간 끝을 넘지 않음). 원래 길이는 original_duration 키로 남깁니다.
+        """
+        result = []
+        n_cut = 0
+        for iv in merged:
+            if iv["duration"] <= max_sec:
+                result.append(iv)
+                continue
+
+            a, b = iv["start_time"], iv["end_time"]
+            inside = [w for w in raw_candidates if w["start_time"] >= a and w["end_time"] <= b]
+            best = None  # (평균 점수, 시작, 끝, 안에 든 창들)
+            s = a
+            while s + max_sec <= b + 1e-9:
+                e = s + max_sec
+                ws = [w for w in inside if w["start_time"] >= s and w["end_time"] <= e]
+                if ws:
+                    avg = sum(w["window_score"] for w in ws) / len(ws)
+                    if best is None or avg > best[0]:  # 같은 평균이면 앞쪽(먼저 찾은 것) 유지
+                        best = (avg, s, e, ws)
+                s += step_size
+
+            if best is None:
+                # 상한이 창 길이보다 짧아 들어가는 창이 없으면 자를 기준이 없으므로 원래 구간을 그대로 둡니다.
+                result.append(iv)
+                continue
+
+            _, s, e, ws = best
+            cut = dict(iv)
+            cut["start_time"] = round(s, 2)
+            cut["end_time"] = round(e, 2)
+            cut["duration"] = round(e - s, 2)
+            cut["window_score"] = max(w["window_score"] for w in ws)
+            cut["chat_count"] = sum(w["chat_count"] for w in ws)
+            if "visual_score" in iv:
+                cut["visual_score"] = max(w.get("visual_score", 0.0) for w in ws)
+            cut["avg_joy"] = ws[0]["avg_joy"]
+            if "audio_score" in iv:
+                cut["audio_score"] = ws[0]["audio_score"]
+            cut["original_duration"] = iv["duration"]
+            result.append(cut)
+            n_cut += 1
+
+        if n_cut:
+            print(f" ➔ 길이 상한 {max_sec:.0f}초: {n_cut}개 구간을 잘라냄")
+        return result
 
     def _merge_overlapping_intervals(self, intervals):
         if not intervals:
