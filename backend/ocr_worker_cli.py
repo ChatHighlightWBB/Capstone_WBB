@@ -29,6 +29,7 @@ device를 CPU로 강제해도 재현되는 걸 확인했고, 다른 프로젝트
     python ocr_worker_cli.py --video path/to/video.mp4 --output out.csv
                               [--crop-box 0.15,0.65,0.6,0.98]
                               [--sample-rate 5.0]
+                              [--visual-output visual_change.csv]  (5초 장면마다 화면 변화량 CSV)
 
 crop-box를 안 주면 Auto-ROI가 자동으로 채팅창 위치를 찾습니다.
 성공하면 exit code 0, 실패하면 0이 아닌 코드와 함께 stderr에 에러를 남깁니다.
@@ -54,6 +55,9 @@ def main():
     parser.add_argument("--crop-box", default=None,
                          help="ymin,xmin,ymax,xmax (0~1 비율). 안 주면 Auto-ROI 사용")
     parser.add_argument("--sample-rate", type=float, default=5.0, help="프레임 샘플링 주기(초)")
+    # OCR 이 이미 꺼내는 장면을 그대로 써서 화면 변화량을 구하므로 영상을 다시 읽지 않습니다.
+    parser.add_argument("--visual-output", default=None,
+                         help="화면 변화량 CSV(timestamp,value) 저장 경로. 안 주면 계산 안 함")
     args = parser.parse_args()
 
     crop_box = None
@@ -84,6 +88,7 @@ def main():
         crop_box=crop_box,
         sample_rate_sec=args.sample_rate,
         output_csv_path=args.output,
+        visual_output_path=args.visual_output,
     )
     print(f"[ocr_worker] 완료: {args.output}")
     sys.exit(0)

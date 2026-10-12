@@ -109,6 +109,26 @@ ROI_MARGIN_X = 0.02        # 최종 영역 가로 여백 (화면 너비 대비)
 ROI_MARGIN_Y = 0.05        # 최종 영역 세로 여백 (화면 높이 대비). 맨 위 줄이 잘리지 않게 넉넉히
 ROI_MIN_ROWS = 8           # 고른 묶음의 줄 수 합이 이보다 적으면 실패로 보고 기존 방식을 쓴다
 
+# --------------------------------------------------------------------------
+# [화면 변화량] OCR 로 5초마다 꺼내는 장면을 그대로 써서, 앞 장면과 얼마나 달라졌는지
+# (픽셀 차이 평균 0~255)를 구합니다. 1차 후보 점수의 보조 신호로 씁니다.
+# 작게 줄여서 비교하는 이유: 화질·압축 잡음 영향을 줄이고 계산을 가볍게 하려고.
+# --------------------------------------------------------------------------
+VIS_SMALL_W = 160          # 비교 전에 줄일 가로 크기
+VIS_SMALL_H = 90           # 비교 전에 줄일 세로 크기
+
+
+def _visual_small(frame, crop_box):
+    """장면 → 흑백 → 160x90 축소 → 채팅창(crop_box, ymin,xmin,ymax,xmax 비율) 영역을 0 으로 칠한 배열.
+    채팅창은 글자가 계속 올라가서 화면 변화와 상관없이 값이 커지므로 뺍니다."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    small = cv2.resize(gray, (VIS_SMALL_W, VIS_SMALL_H), interpolation=cv2.INTER_AREA)
+    if crop_box:
+        ymin, xmin, ymax, xmax = crop_box
+        small[int(ymin * VIS_SMALL_H):int(round(ymax * VIS_SMALL_H)),
+              int(xmin * VIS_SMALL_W):int(round(xmax * VIS_SMALL_W))] = 0
+    return small
+
 
 def _is_valid_token(token: str):
     """토큰 하나가 '그럴듯한 한글 단어'인지 판단. 한글이 없으면 None(중립)."""
@@ -561,6 +581,7 @@ class WBBPPOCRExtractor:
         output_csv_path: str = "extracted_ocr_chats.csv",
         debug_dump_dir: str = None,
         debug_max_dumps: int = 5,
+        visual_output_path: str = None,
     ):
         """
         crop_box를 None으로 두면 detect_chat_roi()가 자동으로 좌표를 잡습니다.
@@ -571,6 +592,10 @@ class WBBPPOCRExtractor:
         지정 폴더에 몇 장 저장합니다. Auto-ROI가 잡은 영역이 실제로 채팅창이
         맞는지, 전처리 후에도 글자를 읽을 수 있는 상태인지 눈으로 먼저 확인한
         뒤 전체 영상을 돌리는 걸 권장합니다.
+
+        visual_output_path를 지정하면 같은 5초 장면마다 앞 장면과의 화면 변화량을
+        구해 그 경로에 CSV(timestamp,value)로 따로 저장합니다. 채팅 CSV 형식은
+        그대로 두려고 별도 파일로 뺐습니다. None이면 예전과 완전히 같게 동작합니다.
         """
         if debug_dump_dir:
             os.makedirs(debug_dump_dir, exist_ok=True)
@@ -597,6 +622,8 @@ class WBBPPOCRExtractor:
         frame_interval = max(1, int(fps * sample_rate_sec))
         extracted_chats = []
         frame_idx = 0
+        visual_rows = []   # [화면 변화량] {"timestamp", "value"} 목록
+        vis_prev = None    # [화면 변화량] 앞 장면(줄인 흑백). 첫 장면은 값 없이 기준으로만 씀
 
         ymin, xmin, ymax, xmax = crop_box
         print(f"🎬 [OCR 스캔 시작] 파일: {video_path} (FPS: {fps:.1f}, 샘플링 주기: {sample_rate_sec}초)")
@@ -610,6 +637,17 @@ class WBBPPOCRExtractor:
             if frame_idx % frame_interval == 0:
                 current_time_sec = round(frame_idx / fps, 2)
                 h, w = frame.shape[:2]
+
+                # [화면 변화량] 아래 크롭·전처리 실패 continue 보다 앞에서 계산해서
+                # 채팅이 없거나 OCR 이 실패한 장면도 빠짐없이 기록합니다.
+                if visual_output_path is not None:
+                    vis_cur = _visual_small(frame, crop_box)
+                    if vis_prev is not None:
+                        visual_rows.append({
+                            "timestamp": current_time_sec,
+                            "value": float(np.mean(cv2.absdiff(vis_cur, vis_prev))),
+                        })
+                    vis_prev = vis_cur
 
                 crop_y1, crop_y2 = int(h * ymin), int(h * ymax)
                 crop_x1, crop_x2 = int(w * xmin), int(w * xmax)
@@ -704,6 +742,12 @@ class WBBPPOCRExtractor:
         # 컬럼을 명시해서 0건이어도 헤더는 항상 남깁니다.
         df = pd.DataFrame(extracted_chats, columns=["timestamp", "frame", "chat_text"])
         df.to_csv(output_csv_path, index=False, encoding="utf-8-sig")
+
+        # [화면 변화량] 채팅 CSV 와 같은 이유로 0건이어도 헤더는 항상 씁니다.
+        if visual_output_path is not None:
+            pd.DataFrame(visual_rows, columns=["timestamp", "value"]).to_csv(
+                visual_output_path, index=False, encoding="utf-8-sig")
+            print(f"🖼️ [화면 변화량] {len(visual_rows)}건 저장: {visual_output_path}")
 
         if extracted_chats:
             print("\n" + "=" * 70)

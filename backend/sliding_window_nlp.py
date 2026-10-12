@@ -1,6 +1,8 @@
+import bisect
 import json
 import math
 import os
+import statistics
 import pandas as pd
 
 # ==============================================================================
@@ -11,6 +13,16 @@ import pandas as pd
 FUSION_W_CHAT = 0.7   # 융합 점수에서 채팅 순위 비중
 FUSION_W_AUDIO = 0.3  # 융합 점수에서 소리 순위 비중
 FUSION_K_STD = 0.5    # 융합 임계점 = 융합 점수 평균 + FUSION_K_STD * 표준편차(모집단)
+
+# ==============================================================================
+# [화면 변화량(보조)] OCR 이 5초마다 꺼낸 장면의 앞 장면 대비 픽셀 차이(0~255).
+# 창 안 값들의 중간값을 VIS_LOW~VIS_HIGH 사이에서 0~1 점수로 바꿔, 채팅 비중에서
+# FUSION_W_VISUAL 만큼 떼어 섞습니다. 2026-10-12 토크 방송 42분 시험에서 3%·5% 모두
+# 1차 후보 변화가 없어서(끝 10초 차이 1건), 극히 일부만 반영하는 보조 신호입니다.
+# ==============================================================================
+FUSION_W_VISUAL = 0.05  # 화면 점수 비중 (채팅 비중 = FUSION_W_CHAT - FUSION_W_VISUAL)
+VIS_LOW = 50.0          # 창 중간값이 이 이하면 화면 점수 0
+VIS_HIGH = 90.0         # 이 이상이면 화면 점수 1 (사이는 비례)
 
 class WBBSlidingWindowDetector:
     """
@@ -53,14 +65,22 @@ class WBBSlidingWindowDetector:
     def detect_candidate_windows(self, window_size: float = 30.0, step_size: float = 5.0, 
                                  max_stage1_candidates: int = 20,
                                  output_json: str = "stage1_candidates.json",
-                                 audio_db_per_sec=None):
+                                 audio_db_per_sec=None, visual_samples=None):
         # audio_db_per_sec: 1초마다의 목소리 대역 음량(dB) 리스트 (audio_energy.py).
         #   None 이면 예전과 똑같이 채팅 감정 점수만으로 후보를 고릅니다.
         #   값이 있으면 채팅+음성 융합 점수로 후보를 고릅니다.
+        # visual_samples: [(초, 화면 변화량), ...] (OCR 워커의 visual_change.csv).
+        #   채팅+음성 융합일 때만 쓰고, None 이면 채팅+음성 융합과 완전히 같습니다.
         use_fusion = audio_db_per_sec is not None
+        if use_fusion and visual_samples is not None:
+            mode_label = "1차 후보: 채팅+음성+화면(보조) 융합"
+        elif use_fusion:
+            mode_label = "1차 후보: 채팅+음성 융합"
+        else:
+            mode_label = "1차 후보: 채팅 단독"
         print("=" * 70)
         print(f"🔍 [1차 하이라이트 탐지] 30초 Sliding Window 분석 가동")
-        print(f" ➔ {'1차 후보: 채팅+음성 융합' if use_fusion else '1차 후보: 채팅 단독'}")
+        print(f" ➔ {mode_label}")
         print(f" ➔ 영상 총 길이: {self.duration_sec:.1f}초 | 적용 동적 임계점: {self.threshold}%")
         print("=" * 70)
 
@@ -72,7 +92,7 @@ class WBBSlidingWindowDetector:
         applied_threshold = self.threshold
         if use_fusion:
             raw_candidates, applied_threshold = self._fusion_raw_candidates(
-                df, audio_db_per_sec, window_size, step_size)
+                df, audio_db_per_sec, window_size, step_size, visual_samples)
         else:
             raw_candidates = self._chat_raw_candidates(df, window_size, step_size)
 
@@ -137,12 +157,20 @@ class WBBSlidingWindowDetector:
 
         return raw_candidates
 
-    def _fusion_raw_candidates(self, df, audio_db_per_sec, window_size, step_size):
+    def _fusion_raw_candidates(self, df, audio_db_per_sec, window_size, step_size, visual_samples=None):
         """
         [채팅+음성 융합] 모든 창(채팅 없는 창 포함)의 채팅 점수·소리 점수를 구해
         각각 순위 비율로 바꾼 뒤 융합하고, 융합 임계점 이상인 창을 모읍니다.
+        visual_samples 가 있으면 화면 점수(0~1)를 FUSION_W_VISUAL 비중으로 더합니다.
         반환: (임계점 넘은 창 목록, 결과 metadata 에 넣을 임계점(0~100 단위))
         """
+        use_visual = visual_samples is not None
+        if use_visual:
+            # 창마다 [start, end) 안의 값을 빨리 찾으려고 시각 순으로 정렬해 둡니다.
+            vis_sorted = sorted(visual_samples)
+            vis_times = [t for t, _ in vis_sorted]
+            vis_values = [v for _, v in vis_sorted]
+
         windows = []
         current_start = 0.0
 
@@ -163,10 +191,19 @@ class WBBSlidingWindowDetector:
             vals = audio_db_per_sec[int(math.floor(current_start)):int(math.ceil(current_end))]
             audio_score = (sum(vals) / len(vals)) if vals else float(min(audio_db_per_sec))
 
+            # 화면 점수: 값의 시각 t 는 (t-5초 → t) 변화 → 창 [start, end) 안의 값들 중간값(없으면 0)
+            visual_score = 0.0
+            if use_visual:
+                lo = bisect.bisect_left(vis_times, current_start)
+                hi = bisect.bisect_left(vis_times, current_end)
+                vis_med = statistics.median(vis_values[lo:hi]) if hi > lo else 0.0
+                visual_score = min(1.0, max(0.0, (vis_med - VIS_LOW) / (VIS_HIGH - VIS_LOW)))
+
             windows.append({
                 "start": current_start, "end": current_end,
                 "avg_joy": avg_joy, "chat_count": len(window_df),
                 "chat_score": chat_score, "audio_score": audio_score,
+                "visual_score": visual_score,
             })
 
             current_start += step_size
@@ -177,7 +214,13 @@ class WBBSlidingWindowDetector:
         n = len(windows)
         chat_rank = pd.Series([w["chat_score"] for w in windows], dtype=float).rank(method="average") / n
         audio_rank = pd.Series([w["audio_score"] for w in windows], dtype=float).rank(method="average") / n
-        fusion = FUSION_W_CHAT * chat_rank + FUSION_W_AUDIO * audio_rank
+        if use_visual:
+            # 화면 점수는 이미 0~1 이라 순위로 바꾸지 않고, 채팅 비중에서 FUSION_W_VISUAL 만큼 떼어 씁니다.
+            visual_score = pd.Series([w["visual_score"] for w in windows], dtype=float)
+            fusion = ((FUSION_W_CHAT - FUSION_W_VISUAL) * chat_rank + FUSION_W_AUDIO * audio_rank
+                      + FUSION_W_VISUAL * visual_score)
+        else:
+            fusion = FUSION_W_CHAT * chat_rank + FUSION_W_AUDIO * audio_rank
 
         # 융합 임계점 = 평균 + K * 표준편차(모집단). self.threshold 는 건드리지 않습니다.
         fusion_threshold = float(fusion.mean() + FUSION_K_STD * fusion.std(ddof=0))
@@ -185,7 +228,7 @@ class WBBSlidingWindowDetector:
         raw_candidates = []
         for w, f, ar in zip(windows, fusion.tolist(), audio_rank.tolist()):
             if f >= fusion_threshold:
-                raw_candidates.append({
+                cand = {
                     "start_time": round(w["start"], 2),
                     "end_time": round(w["end"], 2),
                     "duration": round(w["end"] - w["start"], 2),
@@ -194,7 +237,10 @@ class WBBSlidingWindowDetector:
                     "avg_joy": round(w["avg_joy"], 2),
                     "chat_count": w["chat_count"],
                     "audio_score": round(ar, 4),
-                })
+                }
+                if use_visual:
+                    cand["visual_score"] = round(w["visual_score"], 4)
+                raw_candidates.append(cand)
 
         print(f" ➔ 융합 임계점: {fusion_threshold * 100:.2f} | 넘은 창: {len(raw_candidates)}/{n}개")
         return raw_candidates, round(fusion_threshold * 100, 2)
