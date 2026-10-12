@@ -87,11 +87,19 @@ class WBBAutoHighlightPipeline:
         ocr_csv_path = "extracted_ocr_chats.csv"
         print("\n▶️ [STEP 1/5] PaddleOCR 실시간 채팅 추출 시작 (별도 프로세스)...")
 
+        # [화면 변화량] VISUAL_FUSION 환경변수: 없거나 "on" 이면 켜짐, "off" 면 꺼짐.
+        # 켜짐이면 OCR 워커가 5초 장면마다 화면 변화량을 visual_change.csv 로 같이 남기고,
+        # Step 3 에서 1차 후보 점수에 아주 작은 비중(5%)의 보조 신호로 섞습니다.
+        visual_on = os.getenv("VISUAL_FUSION", "on").strip().lower() != "off"
+        visual_csv_path = "visual_change.csv"
+
         worker_path = os.path.join(os.path.dirname(__file__), "ocr_worker_cli.py")
         cmd = [sys.executable, worker_path, "--video", video_path, "--output", ocr_csv_path,
                "--sample-rate", "5.0"]
         if crop_box:
             cmd += ["--crop-box", ",".join(str(x) for x in crop_box)]
+        if visual_on:
+            cmd += ["--visual-output", visual_csv_path]
 
         # [Windows 인코딩 문제 방지] 콘솔 기본 인코딩(한글 Windows는 보통
         # cp949)으로는 이모지(🚀 등)를 표현할 수 없어서, 자식 프로세스가
@@ -152,12 +160,28 @@ class WBBAutoHighlightPipeline:
                 print(f"⚠️ 음량 계산 실패 → 채팅 단독으로 진행: {e}")
                 audio_db_per_sec = None
 
+        # [화면 변화량] 채팅+음성 융합일 때만 보조로 섞습니다(채팅 단독 방식은 그대로 둠).
+        # 파일이 없거나 0건이어도 분석은 멈추지 않고 채팅+음성으로 진행합니다.
+        visual_samples = None
+        if visual_on and audio_db_per_sec is not None:
+            try:
+                import pandas as pd
+                vdf = pd.read_csv(visual_csv_path)
+                visual_samples = [(float(t), float(v)) for t, v in zip(vdf["timestamp"], vdf["value"])]
+                if not visual_samples:
+                    raise ValueError("화면 변화량 값이 0개입니다")
+                print(f" ➔ 화면 변화량 읽기 완료: {len(visual_samples)}개")
+            except Exception as e:
+                print(f"⚠️ 화면 변화량 없음 → 채팅+음성으로 진행: {e}")
+                visual_samples = None
+
         detector = WBBSlidingWindowDetector(json_path=emotion_json_path)
         stage1_candidates = detector.detect_candidate_windows(
             window_size=30.0,
             step_size=5.0,
             output_json=stage1_json_path,
-            audio_db_per_sec=audio_db_per_sec
+            audio_db_per_sec=audio_db_per_sec,
+            visual_samples=visual_samples
         )
 
         final_candidates_json = "final_highlight_candidates.json"

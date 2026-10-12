@@ -115,6 +115,7 @@ PIPELINE_TEMP_FILES = [
     "final_highlight_candidates.csv",
     "final_highlight_candidates.json",
     "final_highlight.mp4",
+    "visual_change.csv",
 ]
 PIPELINE_TEMP_DIRS = ["temp_clips", "temp_separated"]
 
