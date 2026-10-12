@@ -95,8 +95,19 @@ class WBBEmotionDatasetGenerator:
         self.labels = ['기쁨', '당황', '분노', '슬픔', '혐오', '공포', '중립']
 
         if os.path.exists(model_dir) and os.path.isdir(model_dir):
-            # 폴더에 저장된 토크나이저는 transformers 4.x에서 한국어를 [UNK]로 깨뜨리므로 monologg/kobert 사용
-            self.tokenizer = load_kobert_tokenizer()
+            # 학습 때 monologg/kobert 에 채팅 표현 9개(ㅋㅋㅋㅋ, ㄹㅈㄷ 등)를 추가한 토크나이저를 썼음.
+            # 추가 토큰이 든 모델 폴더면 그 토크나이저를 써야 학습 때와 같게 읽음(2026-10-12 검증셋 macro-F1 0.410→0.449).
+            # 옛 모델 폴더(추가 토큰 없음, 저장된 tokenizer.json 이 한글을 [UNK] 로 깨뜨림)는 monologg 유지.
+            if os.path.exists(os.path.join(model_dir, "added_tokens.json")):
+                try:
+                    self.tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True, local_files_only=True)
+                    print(f"🔤 KoBERT 토크나이저: 모델 폴더(추가 토큰 {len(self.tokenizer) - 8002}개)")
+                except Exception as e:
+                    print(f"⚠️ 모델 폴더 토크나이저 불러오기 실패 → monologg/kobert 로 대체(학습 때와 달라 감정 정확도가 떨어질 수 있음): {e}")
+                    self.tokenizer = load_kobert_tokenizer()
+            else:
+                self.tokenizer = load_kobert_tokenizer()
+                print("🔤 KoBERT 토크나이저: monologg/kobert")
             self.model = AutoModelForSequenceClassification.from_pretrained(model_dir, num_labels=7)
         else:
             self.tokenizer = AutoTokenizer.from_pretrained("skt/kobert-base-v1", trust_remote_code=True)
