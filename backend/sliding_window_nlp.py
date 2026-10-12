@@ -257,6 +257,9 @@ class WBBSlidingWindowDetector:
                 curr["duration"] = round(curr["end_time"] - curr["start_time"], 2)
                 curr["window_score"] = max(curr["window_score"], next_interval["window_score"])
                 curr["chat_count"] += next_interval["chat_count"]
+                # 화면 점수는 합친 구간에서 가장 큰 값을 남겨, 화면 변화가 실제로 얼마나 반영됐는지 결과에서 볼 수 있게 함
+                if "visual_score" in curr and "visual_score" in next_interval:
+                    curr["visual_score"] = max(curr["visual_score"], next_interval["visual_score"])
             else:
                 merged.append(curr)
                 curr = next_interval
