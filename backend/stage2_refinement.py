@@ -21,6 +21,26 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 KOBERT_TOKENIZER_ID = "monologg/kobert"
 
+# 2차 검증(Demucs+Whisper)은 후보 1개당 약 50초(CPU)이고 그중 Demucs 가 86~88%.
+# 최종은 최대 10개라 1차 점수 상위 12개만 검증(2개 여유).
+# 2026-10-13 토크 방송 13개 후보 시험에서 K=10·11·12 모두 최종 10개 동일.
+# 발화 기쁨이 커서 11·12등이 뒤집힐 여지는 남김.
+# 환경변수 STAGE2_TOP_K 로 바꿀 수 있고, 0 이하면 전부 검증합니다.
+STAGE2_TOP_K_DEFAULT = 12
+
+
+def _select_stage2_candidates(candidates, top_k) -> list:
+    """
+    1차 후보 중 2차 검증에 보낼 후보만 고릅니다.
+    - top_k 가 0 이하이거나 후보 수가 top_k 이하면 그대로 돌려줍니다(전부 검증).
+    - 아니면 1차 점수(window_score)가 큰 순으로 top_k 개를 고르고(점수가 같으면
+      앞 시각 우선), 원래처럼 시간 순(start_time)으로 다시 정렬해 돌려줍니다.
+    """
+    if top_k <= 0 or len(candidates) <= top_k:
+        return candidates
+    ranked = sorted(candidates, key=lambda c: (-c["window_score"], c["start_time"]))
+    return sorted(ranked[:top_k], key=lambda c: c["start_time"])
+
 
 def load_kobert_tokenizer():
     """monologg/kobert 토크나이저 로드: 로컬 HF 캐시 우선, 캐시에 없을 때만 다운로드"""
@@ -173,6 +193,17 @@ class WBBStage2Refinement:
         if not candidates:
             print("⚠️ 1차 후보 클립이 비어 있습니다.")
             return []
+
+        # 2차 검증은 후보마다 오래 걸리므로 1차 점수 상위 K개만 보냅니다.
+        # STAGE2_TOP_K 가 숫자가 아니면 기본값을 쓰고, 0 이하면 전부 검증합니다.
+        try:
+            stage2_top_k = int(os.getenv("STAGE2_TOP_K", STAGE2_TOP_K_DEFAULT))
+        except ValueError:
+            stage2_top_k = STAGE2_TOP_K_DEFAULT
+        original_count = len(candidates)
+        candidates = _select_stage2_candidates(candidates, stage2_top_k)
+        if len(candidates) < original_count:
+            print(f" ➔ 2차 검증: 1차 상위 {stage2_top_k}개만 ({original_count}개 중 {original_count - len(candidates)}개 제외)")
 
         print("=" * 70)
         print(f"🎙️ [2차 정밀 검증 및 Top-{top_k} 선별 시작] 총 {len(candidates)}개 후보 대상")
