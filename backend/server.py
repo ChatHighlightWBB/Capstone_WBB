@@ -116,6 +116,7 @@ PIPELINE_TEMP_FILES = [
     "final_highlight_candidates.json",
     "final_highlight.mp4",
     "visual_change.csv",
+    "chat_lines.jsonl",  # OCR 워커의 장면별 채팅 줄 목록(채팅 빈도·집중도용)
 ]
 PIPELINE_TEMP_DIRS = ["temp_clips", "temp_separated"]
 

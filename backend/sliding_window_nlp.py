@@ -1,4 +1,5 @@
 import bisect
+import difflib
 import json
 import math
 import os
@@ -64,6 +65,54 @@ VOICE_W_PITCH = 0.1          # 피치 순위 비중
 VOICE_W_TEMPO = 0.1          # 템포 순위 비중
 VOICE_PITCH_RANK_MISSING = 0.5  # 창 안에 피치 값이 하나도 없을 때 쓰는 피치 순위
 
+# ==============================================================================
+# [채팅 점수: 기쁨+집중도+빈도] 제안서 3.1·4.1.1 채팅 빈도·채팅 간 코사인 유사도(채팅 집중도).
+# 새로 올라온 줄(앞 장면 줄과 문자열 유사도 0.8 미만)만 세고, 30초 창마다 새 줄 수(빈도)와
+# 새 줄끼리 글자 2~3-gram 코사인 유사도 평균(집중도)을 구함.
+# 기쁨 점수와 상관이 낮아(0.29·0.34) 새 정보지만, 0.1 이상 비중에서는 후보 구간이 이어져 결과가 크게
+# 흔들려 보조 비중(5%+5%)으로. 2026-10-14 토크 방송 시험에서 최종 하이라이트 변화는 5초 차이 1개.
+# 각 값을 창 순위로 바꿔 섞은 뒤 다시 순위로 바꿔 융합의 채팅 순위로 씁니다(chat_lines 가 있을 때만).
+# ==============================================================================
+CHAT_W_JOY = 0.9                # 기쁨 순위 비중
+CHAT_W_CONC = 0.05              # 집중도 순위 비중
+CHAT_W_FREQ = 0.05              # 빈도 순위 비중
+CHAT_NEW_LINE_SIM = 0.8         # 앞 장면 줄과 difflib 유사도가 이 이상이면 이미 있던 줄(새 줄 아님)
+CHAT_CONC_MIN_LINES = 3         # 창 안 새 줄이 이 개수 이상일 때만 집중도 계산
+CHAT_CONC_RANK_MISSING = 0.5    # 집중도를 못 구한 창의 집중도 순위
+CHAT_NGRAM_RANGE = (2, 3)       # 집중도에 쓰는 글자 n-gram 범위(공백 뺀 글자)
+# OCR 줄 목록은 줄 없는 장면을 기록하지 않으므로, 바로 앞 기록이 이보다 멀면(5초 장면 하나 이상 비었음)
+# 앞 장면은 줄이 없던 것으로 봅니다(앞 장면 줄과만 비교하는 규칙을 그대로 지키기 위함).
+CHAT_SCENE_GAP_SEC = 7.5
+
+
+def _chat_new_lines(chat_lines):
+    """장면 목록 [{"t", "lines"}] → [(t, 새 줄 목록)]. 바로 앞 장면 줄 중 하나와 비슷하면 이미 있던 줄로 뺌."""
+    out, prev_t, prev_lines = [], None, []
+    for scene in sorted(chat_lines, key=lambda s: float(s["t"])):
+        t, lines = float(scene["t"]), list(scene.get("lines") or [])
+        if prev_t is None or t - prev_t > CHAT_SCENE_GAP_SEC:
+            prev_lines = []  # 바로 앞 5초 장면이 기록에 없음 = 그 장면에 줄이 없었음
+        new = [ln for ln in lines
+               if not any(difflib.SequenceMatcher(None, ln, p).ratio() >= CHAT_NEW_LINE_SIM for p in prev_lines)]
+        out.append((t, new))
+        prev_t, prev_lines = t, lines
+    return out
+
+
+def _chat_concentration(lines):
+    """줄들의 공백 뺀 글자 n-gram 개수 벡터 → 모든 줄 쌍 코사인 유사도 평균(n-gram 이 하나도 없으면 0)"""
+    # scikit-learn 은 무거워서 서버 시작이 느려지지 않게 함수 안에서 import
+    from sklearn.feature_extraction.text import CountVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    docs = [ln.replace(" ", "") for ln in lines]
+    try:
+        X = CountVectorizer(analyzer="char", ngram_range=CHAT_NGRAM_RANGE).fit_transform(docs)
+    except ValueError:  # 모든 줄이 1글자라 n-gram 이 하나도 없음
+        return 0.0
+    sim = cosine_similarity(X)
+    pairs = [sim[i, j] for i in range(len(docs)) for j in range(i + 1, len(docs))]
+    return float(np.mean(pairs))
+
 class WBBSlidingWindowDetector:
     """
     [설명]
@@ -105,7 +154,8 @@ class WBBSlidingWindowDetector:
     def detect_candidate_windows(self, window_size: float = 30.0, step_size: float = 5.0, 
                                  max_stage1_candidates: int = 20,
                                  output_json: str = "stage1_candidates.json",
-                                 audio_db_per_sec=None, visual_samples=None, voice_features=None):
+                                 audio_db_per_sec=None, visual_samples=None, voice_features=None,
+                                 chat_lines=None):
         # audio_db_per_sec: 1초마다의 목소리 대역 음량(dB) 리스트 (audio_energy.py).
         #   None 이면 예전과 똑같이 채팅 감정 점수만으로 후보를 고릅니다.
         #   값이 있으면 채팅+음성 융합 점수로 후보를 고릅니다.
@@ -113,6 +163,8 @@ class WBBSlidingWindowDetector:
         #   채팅+음성 융합일 때만 쓰고, None 이면 채팅+음성 융합과 완전히 같습니다.
         # voice_features: audio_energy.compute_voice_features_per_sec 결과 dict(f0_hz, onset_strength 1초 값).
         #   채팅+음성 융합일 때만 쓰고, None 이면 소리 순위는 음량만으로 계산합니다(예전과 완전히 같음).
+        # chat_lines: OCR 워커의 채팅 줄 목록 [{"t": 초, "lines": [...]}, ...] (chat_lines.jsonl).
+        #   채팅+음성 융합일 때만 쓰고, None 이면 채팅 순위는 기쁨 점수만으로 계산합니다(예전과 완전히 같음).
         use_fusion = audio_db_per_sec is not None
         if use_fusion and visual_samples is not None:
             mode_label = "1차 후보: 채팅+음성+화면(보조) 융합"
@@ -122,6 +174,8 @@ class WBBSlidingWindowDetector:
             mode_label = "1차 후보: 채팅 단독"
         if use_fusion and voice_features is not None:
             mode_label += " (목소리: 음량+피치+템포)"
+        if use_fusion and chat_lines is not None:
+            mode_label += " (채팅: 기쁨+집중도+빈도)"
         print("=" * 70)
         print(f"🔍 [1차 하이라이트 탐지] 30초 Sliding Window 분석 가동")
         print(f" ➔ {mode_label}")
@@ -136,7 +190,7 @@ class WBBSlidingWindowDetector:
         applied_threshold = self.threshold
         if use_fusion:
             raw_candidates, applied_threshold = self._fusion_raw_candidates(
-                df, audio_db_per_sec, window_size, step_size, visual_samples, voice_features)
+                df, audio_db_per_sec, window_size, step_size, visual_samples, voice_features, chat_lines)
         else:
             raw_candidates = self._chat_raw_candidates(df, window_size, step_size)
 
@@ -219,13 +273,15 @@ class WBBSlidingWindowDetector:
         return raw_candidates
 
     def _fusion_raw_candidates(self, df, audio_db_per_sec, window_size, step_size, visual_samples=None,
-                               voice_features=None):
+                               voice_features=None, chat_lines=None):
         """
         [채팅+음성 융합] 모든 창(채팅 없는 창 포함)의 채팅 점수·소리 점수를 구해
         각각 순위 비율로 바꾼 뒤 융합하고, 융합 임계점 이상인 창을 모읍니다.
         visual_samples 가 있으면 화면 점수(0~1)를 FUSION_W_VISUAL 비중으로 더합니다.
         voice_features 가 있으면 융합의 소리 순위를 음량·피치·템포 순위를 섞은 목소리 순위로 바꿉니다
         (저에너지 고감정 보정 조건은 음량 순위로만 판단).
+        chat_lines 가 있으면 융합의 채팅 순위를 기쁨·집중도·빈도 순위를 섞은 채팅 순위로 바꿉니다
+        (저에너지 고감정 보정 조건은 기쁨 순위로만 판단).
         반환: (임계점 넘은 창 목록, 결과 metadata 에 넣을 임계점(0~100 단위))
         """
         use_visual = visual_samples is not None
@@ -241,6 +297,11 @@ class WBBSlidingWindowDetector:
             f0_per_sec = np.array([np.nan if v is None else v for v in voice_features["f0_hz"]], dtype=float)
             onset_per_sec = np.array(voice_features["onset_strength"], dtype=float)
             f0_all = float(np.nanmedian(f0_per_sec))
+
+        use_chat_sim = chat_lines is not None
+        if use_chat_sim:
+            # 장면마다 새로 올라온 줄만 남겨 둡니다(창마다 빈도·집중도 계산에 씀).
+            chat_new = _chat_new_lines(chat_lines)
 
         windows = []
         current_start = 0.0
@@ -281,12 +342,21 @@ class WBBSlidingWindowDetector:
                 if len(onset_per_sec[a:b]):
                     tempo = float(onset_per_sec[a:b].mean())
 
+            # 채팅 빈도·집중도: 채팅 감정과 같은 포함 규칙(start <= t <= end)의 장면들의 새 줄
+            chat_freq, chat_conc = 0, np.nan
+            if use_chat_sim:
+                new_lines = [ln for t, new in chat_new if current_start <= t <= current_end for ln in new]
+                chat_freq = len(new_lines)
+                if chat_freq >= CHAT_CONC_MIN_LINES:
+                    chat_conc = _chat_concentration(new_lines)
+
             windows.append({
                 "start": current_start, "end": current_end,
                 "avg_joy": avg_joy, "chat_count": len(window_df),
                 "chat_score": chat_score, "audio_score": audio_score,
                 "visual_score": visual_score,
                 "pitch_st": pitch_st, "tempo": tempo,
+                "chat_freq": chat_freq, "chat_conc": chat_conc,
             })
 
             current_start += step_size
@@ -296,6 +366,15 @@ class WBBSlidingWindowDetector:
         # 순위 비율(0~1, 가장 큰 값 1, 같은 값은 평균 순위)
         n = len(windows)
         chat_rank = pd.Series([w["chat_score"] for w in windows], dtype=float).rank(method="average") / n
+        # 저에너지 고감정 보정 조건은 채팅 점수를 섞더라도 기쁨 순위로만 판단하려고 따로 둡니다.
+        joy_rank = chat_rank
+        if use_chat_sim:
+            # [채팅 점수] 집중도 순위(값 있는 창끼리, 없는 창은 0.5)·빈도 순위를 기쁨 순위와 섞어 다시 순위로 바꿈
+            conc = pd.Series([w["chat_conc"] for w in windows], dtype=float)
+            conc_rank = (conc.rank(method="average") / conc.notna().sum()).fillna(CHAT_CONC_RANK_MISSING)
+            freq_rank = pd.Series([w["chat_freq"] for w in windows], dtype=float).rank(method="average") / n
+            chat_mix = CHAT_W_JOY * chat_rank + CHAT_W_CONC * conc_rank + CHAT_W_FREQ * freq_rank
+            chat_rank = chat_mix.rank(method="average") / n
         audio_rank = pd.Series([w["audio_score"] for w in windows], dtype=float).rank(method="average") / n
         # 저에너지 고감정 보정 조건은 목소리 점수를 섞더라도 음량 순위로만 판단하려고 따로 둡니다.
         loud_rank = audio_rank
@@ -321,7 +400,7 @@ class WBBSlidingWindowDetector:
         if use_boost:
             w_vis = FUSION_W_VISUAL if use_visual else 0.0
             w_chat = 1.0 - LOW_ENERGY_W_AUDIO - w_vis
-            boosted = ((loud_rank < LOW_ENERGY_AUDIO_RANK_MAX) & (chat_rank >= LOW_ENERGY_CHAT_RANK_MIN)).tolist()
+            boosted = ((loud_rank < LOW_ENERGY_AUDIO_RANK_MAX) & (joy_rank >= LOW_ENERGY_CHAT_RANK_MIN)).tolist()
             boost_fusion = w_chat * chat_rank + LOW_ENERGY_W_AUDIO * audio_rank
             if use_visual:
                 boost_fusion = boost_fusion + w_vis * visual_score

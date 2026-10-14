@@ -93,6 +93,12 @@ class WBBAutoHighlightPipeline:
         visual_on = os.getenv("VISUAL_FUSION", "on").strip().lower() != "off"
         visual_csv_path = "visual_change.csv"
 
+        # [채팅 빈도·집중도] CHAT_SIM_FUSION 환경변수: 없거나 "on" 이면 켜짐, "off" 면 꺼짐.
+        # 켜짐이면 OCR 워커가 장면마다 이어 붙이기 전 채팅 줄 목록을 chat_lines.jsonl 로 같이 남기고,
+        # Step 3 에서 채팅 점수에 작은 비중(집중도 5%+빈도 5%)으로 섞습니다.
+        chat_sim_on = os.getenv("CHAT_SIM_FUSION", "on").strip().lower() != "off"
+        chat_lines_path = "chat_lines.jsonl"
+
         worker_path = os.path.join(os.path.dirname(__file__), "ocr_worker_cli.py")
         cmd = [sys.executable, worker_path, "--video", video_path, "--output", ocr_csv_path,
                "--sample-rate", "5.0"]
@@ -100,6 +106,8 @@ class WBBAutoHighlightPipeline:
             cmd += ["--crop-box", ",".join(str(x) for x in crop_box)]
         if visual_on:
             cmd += ["--visual-output", visual_csv_path]
+        if chat_sim_on:
+            cmd += ["--lines-output", chat_lines_path]
 
         # [Windows 인코딩 문제 방지] 콘솔 기본 인코딩(한글 Windows는 보통
         # cp949)으로는 이모지(🚀 등)를 표현할 수 없어서, 자식 프로세스가
@@ -196,6 +204,21 @@ class WBBAutoHighlightPipeline:
                 print(f"⚠️ 화면 변화량 없음 → 채팅+음성으로 진행: {e}")
                 visual_samples = None
 
+        # [채팅 빈도·집중도] 채팅+음성 융합일 때만 채팅 점수에 섞습니다(채팅 단독 방식은 그대로 둠).
+        # 파일이 없거나 0건이어도 분석은 멈추지 않고 채팅 기쁨만으로 진행합니다.
+        chat_lines = None
+        if chat_sim_on and audio_db_per_sec is not None:
+            try:
+                import json
+                with open(chat_lines_path, "r", encoding="utf-8") as lf:
+                    chat_lines = [json.loads(line) for line in lf if line.strip()]
+                if not chat_lines:
+                    raise ValueError("채팅 줄 목록이 0개입니다")
+                print(f" ➔ 채팅 줄 목록 읽기 완료: {len(chat_lines)}개 장면")
+            except Exception as e:
+                print(f"⚠️ 채팅 줄 목록 없음 → 채팅 기쁨만 사용: {e}")
+                chat_lines = None
+
         detector = WBBSlidingWindowDetector(json_path=emotion_json_path)
         stage1_candidates = detector.detect_candidate_windows(
             window_size=30.0,
@@ -203,7 +226,8 @@ class WBBAutoHighlightPipeline:
             output_json=stage1_json_path,
             audio_db_per_sec=audio_db_per_sec,
             visual_samples=visual_samples,
-            voice_features=voice_features
+            voice_features=voice_features,
+            chat_lines=chat_lines
         )
 
         final_candidates_json = "final_highlight_candidates.json"
