@@ -388,6 +388,9 @@ class WBBSlidingWindowDetector:
         cut["avg_joy"] = ws[0]["avg_joy"]
         if "audio_score" in iv:
             cut["audio_score"] = ws[0]["audio_score"]
+        # 잘라낸 90초 안에 보정된 창이 있을 때만 표시(합친 긴 구간의 다른 위치 보정이 옮겨 오지 않게)
+        if "low_energy_boost" in iv:
+            cut["low_energy_boost"] = any(w.get("low_energy_boost", False) for w in ws)
         cut["original_duration"] = iv["duration"]
         return cut
 
@@ -407,7 +410,8 @@ class WBBSlidingWindowDetector:
                 if "visual_score" in curr and "visual_score" in next_interval:
                     curr["visual_score"] = max(curr["visual_score"], next_interval["visual_score"])
                 # 저에너지 보정 창이 하나라도 섞이면 합친 구간도 보정 표시를 남김
-                if "low_energy_boost" in curr and "low_energy_boost" in next_interval: curr["low_energy_boost"] = curr["low_energy_boost"] or next_interval["low_energy_boost"]
+                if "low_energy_boost" in curr and "low_energy_boost" in next_interval:
+                    curr["low_energy_boost"] = curr["low_energy_boost"] or next_interval["low_energy_boost"]
             else:
                 merged.append(curr)
                 curr = next_interval
