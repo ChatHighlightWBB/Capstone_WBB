@@ -24,6 +24,7 @@
    자동 탐지를 쓸 때 더 필요한 안전장치입니다.)
 """
 
+import json
 import os
 import re
 import platform
@@ -582,6 +583,7 @@ class WBBPPOCRExtractor:
         debug_dump_dir: str = None,
         debug_max_dumps: int = 5,
         visual_output_path: str = None,
+        lines_output_path: str = None,
     ):
         """
         crop_box를 None으로 두면 detect_chat_roi()가 자동으로 좌표를 잡습니다.
@@ -596,6 +598,11 @@ class WBBPPOCRExtractor:
         visual_output_path를 지정하면 같은 5초 장면마다 앞 장면과의 화면 변화량을
         구해 그 경로에 CSV(timestamp,value)로 따로 저장합니다. 채팅 CSV 형식은
         그대로 두려고 별도 파일로 뺐습니다. None이면 예전과 완전히 같게 동작합니다.
+
+        lines_output_path를 지정하면 채팅 CSV 의 chat_text 를 만들 때 쓰는 줄 목록(거른 뒤,
+        이어 붙이기 전)을 장면마다 {"t": 초, "lines": [...]} 로 그 경로에 JSONL 로 저장합니다.
+        1차 후보의 채팅 빈도·집중도(새 줄 수, 줄끼리 유사도)를 줄 단위로 계산하려고 남깁니다.
+        줄이 없는 장면은 채팅 CSV 와 같이 기록하지 않습니다. None이면 예전과 완전히 같게 동작합니다.
         """
         if debug_dump_dir:
             os.makedirs(debug_dump_dir, exist_ok=True)
@@ -624,6 +631,7 @@ class WBBPPOCRExtractor:
         frame_idx = 0
         visual_rows = []   # [화면 변화량] {"timestamp", "value"} 목록
         vis_prev = None    # [화면 변화량] 앞 장면(줄인 흑백). 첫 장면은 값 없이 기준으로만 씀
+        line_rows = []     # [채팅 줄 목록] {"t", "lines"} 목록 (lines_output_path 가 있을 때만 씀)
 
         ymin, xmin, ymax, xmax = crop_box
         print(f"🎬 [OCR 스캔 시작] 파일: {video_path} (FPS: {fps:.1f}, 샘플링 주기: {sample_rate_sec}초)")
@@ -718,6 +726,9 @@ class WBBPPOCRExtractor:
                                 "frame": frame_idx,
                                 "chat_text": combined_text
                             })
+                            # [채팅 줄 목록] 이어 붙이기 전 줄 목록을 그대로 남김(chat_text 와 같은 장면·같은 줄)
+                            if lines_output_path is not None:
+                                line_rows.append({"t": current_time_sec, "lines": list(quality_texts)})
                             print(f" ➔ [{current_time_sec:>6.2f}초] 정밀 OCR 인식: {combined_text}")
                             if dropped_texts:
                                 print(f"    (잡음으로 개별 제외: {dropped_texts})")
@@ -748,6 +759,13 @@ class WBBPPOCRExtractor:
             pd.DataFrame(visual_rows, columns=["timestamp", "value"]).to_csv(
                 visual_output_path, index=False, encoding="utf-8-sig")
             print(f"🖼️ [화면 변화량] {len(visual_rows)}건 저장: {visual_output_path}")
+
+        # [채팅 줄 목록] 채팅 CSV 와 같은 이유로 0건이어도 빈 파일은 항상 새로 씁니다.
+        if lines_output_path is not None:
+            with open(lines_output_path, "w", encoding="utf-8") as lf:
+                for row in line_rows:
+                    lf.write(json.dumps(row, ensure_ascii=False) + "\n")
+            print(f"📝 [채팅 줄 목록] {len(line_rows)}개 장면 저장: {lines_output_path}")
 
         if extracted_chats:
             print("\n" + "=" * 70)
