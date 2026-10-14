@@ -3,6 +3,7 @@ import json
 import math
 import os
 import statistics
+import numpy as np
 import pandas as pd
 
 # ==============================================================================
@@ -52,6 +53,17 @@ LOW_ENERGY_AUDIO_RANK_MAX = 0.30  # 소리 순위가 이 값 미만이고
 LOW_ENERGY_CHAT_RANK_MIN = 0.70   # 채팅 순위가 이 값 이상인 창만 보정
 LOW_ENERGY_W_AUDIO = 0.15         # 보정 창의 소리 비중
 
+# ==============================================================================
+# [목소리 점수: 음량+피치+템포] 목소리 점수 = 음량 80% + 피치 10% + 템포 10%.
+# 피치·템포는 음량과 상관이 높고 측정 한계(피치 옥타브 오검출 가능, 템포는 소리 변화량에 가까움)가 있어 보조 비중.
+# 2026-10-14 토크 방송 시험에서 최종 하이라이트 차이는 1개 구간(17:35→17:30, 5초).
+# 각 값을 창 순위로 바꿔 섞은 뒤 다시 순위로 바꿔 융합의 소리 순위로 씁니다(voice_features 가 있을 때만).
+# ==============================================================================
+VOICE_W_RMS = 0.8            # 음량 순위 비중
+VOICE_W_PITCH = 0.1          # 피치 순위 비중
+VOICE_W_TEMPO = 0.1          # 템포 순위 비중
+VOICE_PITCH_RANK_MISSING = 0.5  # 창 안에 피치 값이 하나도 없을 때 쓰는 피치 순위
+
 class WBBSlidingWindowDetector:
     """
     [설명]
@@ -93,12 +105,14 @@ class WBBSlidingWindowDetector:
     def detect_candidate_windows(self, window_size: float = 30.0, step_size: float = 5.0, 
                                  max_stage1_candidates: int = 20,
                                  output_json: str = "stage1_candidates.json",
-                                 audio_db_per_sec=None, visual_samples=None):
+                                 audio_db_per_sec=None, visual_samples=None, voice_features=None):
         # audio_db_per_sec: 1초마다의 목소리 대역 음량(dB) 리스트 (audio_energy.py).
         #   None 이면 예전과 똑같이 채팅 감정 점수만으로 후보를 고릅니다.
         #   값이 있으면 채팅+음성 융합 점수로 후보를 고릅니다.
         # visual_samples: [(초, 화면 변화량), ...] (OCR 워커의 visual_change.csv).
         #   채팅+음성 융합일 때만 쓰고, None 이면 채팅+음성 융합과 완전히 같습니다.
+        # voice_features: audio_energy.compute_voice_features_per_sec 결과 dict(f0_hz, onset_strength 1초 값).
+        #   채팅+음성 융합일 때만 쓰고, None 이면 소리 순위는 음량만으로 계산합니다(예전과 완전히 같음).
         use_fusion = audio_db_per_sec is not None
         if use_fusion and visual_samples is not None:
             mode_label = "1차 후보: 채팅+음성+화면(보조) 융합"
@@ -106,6 +120,8 @@ class WBBSlidingWindowDetector:
             mode_label = "1차 후보: 채팅+음성 융합"
         else:
             mode_label = "1차 후보: 채팅 단독"
+        if use_fusion and voice_features is not None:
+            mode_label += " (목소리: 음량+피치+템포)"
         print("=" * 70)
         print(f"🔍 [1차 하이라이트 탐지] 30초 Sliding Window 분석 가동")
         print(f" ➔ {mode_label}")
@@ -120,7 +136,7 @@ class WBBSlidingWindowDetector:
         applied_threshold = self.threshold
         if use_fusion:
             raw_candidates, applied_threshold = self._fusion_raw_candidates(
-                df, audio_db_per_sec, window_size, step_size, visual_samples)
+                df, audio_db_per_sec, window_size, step_size, visual_samples, voice_features)
         else:
             raw_candidates = self._chat_raw_candidates(df, window_size, step_size)
 
@@ -202,11 +218,14 @@ class WBBSlidingWindowDetector:
 
         return raw_candidates
 
-    def _fusion_raw_candidates(self, df, audio_db_per_sec, window_size, step_size, visual_samples=None):
+    def _fusion_raw_candidates(self, df, audio_db_per_sec, window_size, step_size, visual_samples=None,
+                               voice_features=None):
         """
         [채팅+음성 융합] 모든 창(채팅 없는 창 포함)의 채팅 점수·소리 점수를 구해
         각각 순위 비율로 바꾼 뒤 융합하고, 융합 임계점 이상인 창을 모읍니다.
         visual_samples 가 있으면 화면 점수(0~1)를 FUSION_W_VISUAL 비중으로 더합니다.
+        voice_features 가 있으면 융합의 소리 순위를 음량·피치·템포 순위를 섞은 목소리 순위로 바꿉니다
+        (저에너지 고감정 보정 조건은 음량 순위로만 판단).
         반환: (임계점 넘은 창 목록, 결과 metadata 에 넣을 임계점(0~100 단위))
         """
         use_visual = visual_samples is not None
@@ -215,6 +234,13 @@ class WBBSlidingWindowDetector:
             vis_sorted = sorted(visual_samples)
             vis_times = [t for t, _ in vis_sorted]
             vis_values = [v for _, v in vis_sorted]
+
+        use_voice = voice_features is not None
+        if use_voice:
+            # 1초 값 배열(f0 없는 초는 NaN). 창 피치는 영상 전체 f0 중간값 대비 반음 차이로 씁니다.
+            f0_per_sec = np.array([np.nan if v is None else v for v in voice_features["f0_hz"]], dtype=float)
+            onset_per_sec = np.array(voice_features["onset_strength"], dtype=float)
+            f0_all = float(np.nanmedian(f0_per_sec))
 
         windows = []
         current_start = 0.0
@@ -244,11 +270,23 @@ class WBBSlidingWindowDetector:
                 vis_med = statistics.median(vis_values[lo:hi]) if hi > lo else 0.0
                 visual_score = min(1.0, max(0.0, (vis_med - VIS_LOW) / (VIS_HIGH - VIS_LOW)))
 
+            # 피치·템포: 음량과 같은 1초 범위 [floor(start), ceil(end)) 의 f0 중간값(반음)·onset strength 평균
+            pitch_st, tempo = np.nan, np.nan
+            if use_voice:
+                a, b = int(math.floor(current_start)), int(math.ceil(current_end))
+                wf = f0_per_sec[a:b]
+                wf = wf[np.isfinite(wf)]
+                if len(wf):
+                    pitch_st = 12 * math.log2(float(np.median(wf)) / f0_all)
+                if len(onset_per_sec[a:b]):
+                    tempo = float(onset_per_sec[a:b].mean())
+
             windows.append({
                 "start": current_start, "end": current_end,
                 "avg_joy": avg_joy, "chat_count": len(window_df),
                 "chat_score": chat_score, "audio_score": audio_score,
                 "visual_score": visual_score,
+                "pitch_st": pitch_st, "tempo": tempo,
             })
 
             current_start += step_size
@@ -259,6 +297,15 @@ class WBBSlidingWindowDetector:
         n = len(windows)
         chat_rank = pd.Series([w["chat_score"] for w in windows], dtype=float).rank(method="average") / n
         audio_rank = pd.Series([w["audio_score"] for w in windows], dtype=float).rank(method="average") / n
+        # 저에너지 고감정 보정 조건은 목소리 점수를 섞더라도 음량 순위로만 판단하려고 따로 둡니다.
+        loud_rank = audio_rank
+        if use_voice:
+            # [목소리 점수] 피치 순위(값 있는 창끼리, 없는 창은 0.5)·템포 순위를 음량 순위와 섞어 다시 순위로 바꿈
+            pitch = pd.Series([w["pitch_st"] for w in windows], dtype=float)
+            pitch_rank = (pitch.rank(method="average") / pitch.notna().sum()).fillna(VOICE_PITCH_RANK_MISSING)
+            tempo_rank = pd.Series([w["tempo"] for w in windows], dtype=float).rank(method="average") / n
+            voice = VOICE_W_RMS * audio_rank + VOICE_W_PITCH * pitch_rank + VOICE_W_TEMPO * tempo_rank
+            audio_rank = voice.rank(method="average") / n
         if use_visual:
             # 화면 점수는 이미 0~1 이라 순위로 바꾸지 않고, 채팅 비중에서 FUSION_W_VISUAL 만큼 떼어 씁니다.
             visual_score = pd.Series([w["visual_score"] for w in windows], dtype=float)
@@ -274,7 +321,7 @@ class WBBSlidingWindowDetector:
         if use_boost:
             w_vis = FUSION_W_VISUAL if use_visual else 0.0
             w_chat = 1.0 - LOW_ENERGY_W_AUDIO - w_vis
-            boosted = ((audio_rank < LOW_ENERGY_AUDIO_RANK_MAX) & (chat_rank >= LOW_ENERGY_CHAT_RANK_MIN)).tolist()
+            boosted = ((loud_rank < LOW_ENERGY_AUDIO_RANK_MAX) & (chat_rank >= LOW_ENERGY_CHAT_RANK_MIN)).tolist()
             boost_fusion = w_chat * chat_rank + LOW_ENERGY_W_AUDIO * audio_rank
             if use_visual:
                 boost_fusion = boost_fusion + w_vis * visual_score

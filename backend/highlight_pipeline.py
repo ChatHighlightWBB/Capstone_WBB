@@ -147,7 +147,28 @@ class WBBAutoHighlightPipeline:
         # 켜짐이면 스트리머 목소리 크기(1초 dB)를 구해 1차 후보 점수에 섞습니다.
         # 음량 계산이 실패해도 분석 전체가 멈추지 않게 채팅 단독으로 진행합니다.
         audio_db_per_sec = None
-        if os.getenv("AUDIO_FUSION", "on").strip().lower() != "off":
+        # [피치·템포] PITCH_TEMPO_FUSION 환경변수: 없거나 "on" 이면 켜짐, "off" 면 꺼짐(AUDIO_FUSION 이 켜져 있을 때만).
+        # 켜짐이면 음량과 함께 피치·템포를 구해 목소리 점수(음량 80%+피치 10%+템포 10%)로 섞습니다.
+        # 실패하면 분석을 멈추지 않고 아래 기존 방식(음량만)으로 다시 계산합니다.
+        voice_features = None
+        if (os.getenv("AUDIO_FUSION", "on").strip().lower() != "off"
+                and os.getenv("PITCH_TEMPO_FUSION", "on").strip().lower() != "off"):
+            try:
+                from audio_energy import compute_voice_features_per_sec
+                audio_start = time.time()
+                features = compute_voice_features_per_sec(video_path)
+                if not features["rms_db"]:  # 오디오 트랙이 없는 영상 등
+                    raise ValueError("음량 값이 0개입니다(오디오 트랙 없음?)")
+                audio_db_per_sec = features["rms_db"]
+                voice_features = features
+                print(f" ➔ 목소리 음량·피치·템포 계산 완료: {len(audio_db_per_sec)}초 분량 "
+                      f"({time.time() - audio_start:.1f}초 소요)")
+            except Exception as e:
+                print(f"⚠️ 피치·템포 계산 실패 → 음량만 사용: {e}")
+                audio_db_per_sec = None
+                voice_features = None
+        # 피치·템포를 이미 구했으면 건너뛰고, 꺼져 있거나 실패했으면 예전과 똑같이 음량만 계산합니다.
+        if voice_features is None and os.getenv("AUDIO_FUSION", "on").strip().lower() != "off":
             try:
                 from audio_energy import compute_loudness_per_sec
                 audio_start = time.time()
@@ -181,7 +202,8 @@ class WBBAutoHighlightPipeline:
             step_size=5.0,
             output_json=stage1_json_path,
             audio_db_per_sec=audio_db_per_sec,
-            visual_samples=visual_samples
+            visual_samples=visual_samples,
+            voice_features=voice_features
         )
 
         final_candidates_json = "final_highlight_candidates.json"
