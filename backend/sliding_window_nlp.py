@@ -32,6 +32,26 @@ VIS_HIGH = 90.0         # 이 이상이면 화면 점수 1 (사이는 비례)
 # ==============================================================================
 CLIP_MAX_SEC_DEFAULT = 90.0  # 제안서의 "1차 후보 클립 1~2분", 태섭 확인 10-12
 
+# ==============================================================================
+# [두 번째 90초] 합친 구간이 길면(90초+30초+90초 이상) 가장 좋은 90초와 30초 이상 떨어진 두 번째 90초까지 남김.
+# 붙은 조각은 안 남겨 중복처럼 보이지 않게 함(태섭 확인 10-14).
+# 토크 방송 시험에서 1:05~6:30 안의 4:50~6:20(1차 87점)과 보정 부작용으로 빠지던 10:15~11:45 를 살림.
+# 환경변수 CLIP_SECOND_SPAN: 없거나 "on" 이면 켜짐, "off" 면 꺼짐(첫 90초 하나만 남기는 예전 방식).
+# ==============================================================================
+CLIP_SECOND_SPAN_MIN_TOTAL = 210.0  # 원래 합친 구간이 이 길이(초) 이상일 때만 두 번째 90초를 찾음
+CLIP_SECOND_SPAN_GAP = 30.0         # 두 번째 구간은 첫 구간과 이만큼(초) 이상 떨어져야 함
+
+# ==============================================================================
+# [저에너지 고감정 보정] 제안서 4.1.1 '저에너지 고감정 상황 시 채팅 가중치 자동 상향 보정'.
+# 방송인 목소리는 이 영상에서 작은 편(하위 30%)인데 채팅 반응은 큰(상위 30%) 창은 채팅 비중을 올림.
+# 2026-10-14 토크 방송 시험에서 21개 창이 걸려 '조용히 말했는데 채팅이 터진' 23:05 장면이 1차 후보로 들어옴.
+# 채팅 비중 = 1 - LOW_ENERGY_W_AUDIO - 화면 비중(화면 있으면 FUSION_W_VISUAL, 없으면 0) → 화면 있으면 0.80, 없으면 0.85.
+# 환경변수 LOW_ENERGY_BOOST: 없거나 "on" 이면 켜짐, "off" 면 꺼짐.
+# ==============================================================================
+LOW_ENERGY_AUDIO_RANK_MAX = 0.30  # 소리 순위가 이 값 미만이고
+LOW_ENERGY_CHAT_RANK_MIN = 0.70   # 채팅 순위가 이 값 이상인 창만 보정
+LOW_ENERGY_W_AUDIO = 0.15         # 보정 창의 소리 비중
+
 class WBBSlidingWindowDetector:
     """
     [설명]
@@ -247,11 +267,25 @@ class WBBSlidingWindowDetector:
         else:
             fusion = FUSION_W_CHAT * chat_rank + FUSION_W_AUDIO * audio_rank
 
+        # [저에너지 고감정 보정] 목소리는 작은데 채팅 반응이 큰 창만 채팅 비중을 올려 다시 계산합니다.
+        # 나머지 창은 위 융합 점수 그대로이고, 임계점은 보정이 반영된 최종 융합 점수로 계산합니다.
+        use_boost = os.getenv("LOW_ENERGY_BOOST", "on").strip().lower() != "off"
+        boosted = [False] * n
+        if use_boost:
+            w_vis = FUSION_W_VISUAL if use_visual else 0.0
+            w_chat = 1.0 - LOW_ENERGY_W_AUDIO - w_vis
+            boosted = ((audio_rank < LOW_ENERGY_AUDIO_RANK_MAX) & (chat_rank >= LOW_ENERGY_CHAT_RANK_MIN)).tolist()
+            boost_fusion = w_chat * chat_rank + LOW_ENERGY_W_AUDIO * audio_rank
+            if use_visual:
+                boost_fusion = boost_fusion + w_vis * visual_score
+            fusion = fusion.where(~pd.Series(boosted), boost_fusion)
+            print(f" ➔ 저에너지 고감정 보정: {sum(boosted)}개 창")
+
         # 융합 임계점 = 평균 + K * 표준편차(모집단). self.threshold 는 건드리지 않습니다.
         fusion_threshold = float(fusion.mean() + FUSION_K_STD * fusion.std(ddof=0))
 
         raw_candidates = []
-        for w, f, ar in zip(windows, fusion.tolist(), audio_rank.tolist()):
+        for w, f, ar, bst in zip(windows, fusion.tolist(), audio_rank.tolist(), boosted):
             if f >= fusion_threshold:
                 cand = {
                     "start_time": round(w["start"], 2),
@@ -265,6 +299,8 @@ class WBBSlidingWindowDetector:
                 }
                 if use_visual:
                     cand["visual_score"] = round(w["visual_score"], 4)
+                if use_boost:
+                    cand["low_energy_boost"] = bool(bst)
                 raw_candidates.append(cand)
 
         print(f" ➔ 융합 임계점: {fusion_threshold * 100:.2f} | 넘은 창: {len(raw_candidates)}/{n}개")
@@ -276,9 +312,13 @@ class WBBSlidingWindowDetector:
         그 안의 합치기 전 창(raw_candidates)들로 길이 max_sec 구간을 step_size 씩 옮겨 보며
         [s, s+max_sec] 안에 완전히 들어가는 창들의 window_score 평균이 가장 큰 위치 하나만 남깁니다
         (같으면 앞쪽, 끝은 원래 구간 끝을 넘지 않음). 원래 길이는 original_duration 키로 남깁니다.
+        [두 번째 90초] CLIP_SECOND_SPAN 이 켜져 있고 원래 구간이 CLIP_SECOND_SPAN_MIN_TOTAL 이상이면,
+        첫 구간과 CLIP_SECOND_SPAN_GAP 이상 떨어진 위치 중 같은 방식으로 하나 더 남깁니다(second_span=True).
         """
+        use_second = os.getenv("CLIP_SECOND_SPAN", "on").strip().lower() != "off"
         result = []
         n_cut = 0
+        n_second = 0
         for iv in merged:
             if iv["duration"] <= max_sec:
                 result.append(iv)
@@ -286,41 +326,73 @@ class WBBSlidingWindowDetector:
 
             a, b = iv["start_time"], iv["end_time"]
             inside = [w for w in raw_candidates if w["start_time"] >= a and w["end_time"] <= b]
-            best = None  # (평균 점수, 시작, 끝, 안에 든 창들)
-            s = a
-            while s + max_sec <= b + 1e-9:
-                e = s + max_sec
-                ws = [w for w in inside if w["start_time"] >= s and w["end_time"] <= e]
-                if ws:
-                    avg = sum(w["window_score"] for w in ws) / len(ws)
-                    if best is None or avg > best[0]:  # 같은 평균이면 앞쪽(먼저 찾은 것) 유지
-                        best = (avg, s, e, ws)
-                s += step_size
+            best = self._best_capped_span(inside, a, b, max_sec, step_size)
 
             if best is None:
                 # 상한이 창 길이보다 짧아 들어가는 창이 없으면 자를 기준이 없으므로 원래 구간을 그대로 둡니다.
                 result.append(iv)
                 continue
 
-            _, s, e, ws = best
-            cut = dict(iv)
-            cut["start_time"] = round(s, 2)
-            cut["end_time"] = round(e, 2)
-            cut["duration"] = round(e - s, 2)
-            cut["window_score"] = max(w["window_score"] for w in ws)
-            cut["chat_count"] = sum(w["chat_count"] for w in ws)
-            if "visual_score" in iv:
-                cut["visual_score"] = max(w.get("visual_score", 0.0) for w in ws)
-            cut["avg_joy"] = ws[0]["avg_joy"]
-            if "audio_score" in iv:
-                cut["audio_score"] = ws[0]["audio_score"]
-            cut["original_duration"] = iv["duration"]
-            result.append(cut)
+            _, s1, e1, ws = best
+            result.append(self._make_capped_interval(iv, s1, e1, ws))
             n_cut += 1
 
+            if use_second and iv["duration"] >= CLIP_SECOND_SPAN_MIN_TOTAL:
+                # 첫 구간과 붙어 있거나 겹치는 위치는 빼고, GAP 이상 떨어진 위치에서만 두 번째를 찾습니다.
+                gap = CLIP_SECOND_SPAN_GAP
+                far = lambda s, e: e <= s1 - gap + 1e-9 or s >= e1 + gap - 1e-9
+                best2 = self._best_capped_span(inside, a, b, max_sec, step_size, allowed=far)
+                if best2 is not None:  # 들어가는 창이 없으면 두 번째는 만들지 않음
+                    _, s2, e2, ws2 = best2
+                    second = self._make_capped_interval(iv, s2, e2, ws2)
+                    second["second_span"] = True
+                    result.append(second)
+                    n_second += 1
+
         if n_cut:
-            print(f" ➔ 길이 상한 {max_sec:.0f}초: {n_cut}개 구간을 잘라냄")
+            msg = f" ➔ 길이 상한 {max_sec:.0f}초: {n_cut}개 구간을 잘라냄"
+            if use_second:
+                msg += f" (두 번째 {max_sec:.0f}초 {n_second}개 추가)"
+            print(msg)
         return result
+
+    def _best_capped_span(self, inside, a, b, max_sec, step_size, allowed=None):
+        """
+        [a, b] 안에서 길이 max_sec 구간을 step_size 씩 옮겨 보며 [s, s+max_sec] 안에 완전히 들어가는
+        창들의 window_score 평균이 가장 큰 위치를 고릅니다(같으면 앞쪽). allowed(s, e) 가 False 인 위치는 건너뜀.
+        반환: (평균 점수, 시작, 끝, 안에 든 창들) 또는 들어가는 창이 없으면 None
+        """
+        best = None
+        s = a
+        while s + max_sec <= b + 1e-9:
+            e = s + max_sec
+            if allowed is None or allowed(s, e):
+                ws = [w for w in inside if w["start_time"] >= s and w["end_time"] <= e]
+                if ws:
+                    avg = sum(w["window_score"] for w in ws) / len(ws)
+                    if best is None or avg > best[0]:  # 같은 평균이면 앞쪽(먼저 찾은 것) 유지
+                        best = (avg, s, e, ws)
+            s += step_size
+        return best
+
+    def _make_capped_interval(self, iv, s, e, ws):
+        """잘라낸 구간의 필드를 채웁니다: window_score 최대, chat_count 합, visual_score 최대, avg_joy·audio_score 첫 창."""
+        cut = dict(iv)
+        cut["start_time"] = round(s, 2)
+        cut["end_time"] = round(e, 2)
+        cut["duration"] = round(e - s, 2)
+        cut["window_score"] = max(w["window_score"] for w in ws)
+        cut["chat_count"] = sum(w["chat_count"] for w in ws)
+        if "visual_score" in iv:
+            cut["visual_score"] = max(w.get("visual_score", 0.0) for w in ws)
+        cut["avg_joy"] = ws[0]["avg_joy"]
+        if "audio_score" in iv:
+            cut["audio_score"] = ws[0]["audio_score"]
+        # 잘라낸 90초 안에 보정된 창이 있을 때만 표시(합친 긴 구간의 다른 위치 보정이 옮겨 오지 않게)
+        if "low_energy_boost" in iv:
+            cut["low_energy_boost"] = any(w.get("low_energy_boost", False) for w in ws)
+        cut["original_duration"] = iv["duration"]
+        return cut
 
     def _merge_overlapping_intervals(self, intervals):
         if not intervals:
@@ -337,6 +409,9 @@ class WBBSlidingWindowDetector:
                 # 화면 점수는 합친 구간에서 가장 큰 값을 남겨, 화면 변화가 실제로 얼마나 반영됐는지 결과에서 볼 수 있게 함
                 if "visual_score" in curr and "visual_score" in next_interval:
                     curr["visual_score"] = max(curr["visual_score"], next_interval["visual_score"])
+                # 저에너지 보정 창이 하나라도 섞이면 합친 구간도 보정 표시를 남김
+                if "low_energy_boost" in curr and "low_energy_boost" in next_interval:
+                    curr["low_energy_boost"] = curr["low_energy_boost"] or next_interval["low_energy_boost"]
             else:
                 merged.append(curr)
                 curr = next_interval
