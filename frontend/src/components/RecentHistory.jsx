@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Inbox } from "lucide-react";
 import { getHistory, removeFromHistory } from "../history.js";
 import { getResult } from "../api.js";
 
@@ -113,7 +114,9 @@ export default function RecentHistory() {
       ) : (
         checked && (
           <div className="recent-history-empty">
-            <span className="recent-history-empty-icon">📭</span>
+            <span className="recent-history-empty-icon">
+              <Inbox size={30} strokeWidth={1.8} aria-hidden="true" />
+            </span>
             <p>아직 이 브라우저에서 분석한 내역이 없어요.</p>
           </div>
         )

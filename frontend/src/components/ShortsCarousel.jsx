@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { setDuck } from "../sound.js";
 
 // 홈 화면 예시 영상 6개 (frontend/public/videos/ 폴더에 넣은 짧은 클립)
 // 파일 이름이나 태그를 바꾸려면 이 배열만 수정하면 됩니다.
@@ -67,7 +68,11 @@ export default function ShortsCarousel() {
         });
       }
     });
+    // 영상 소리가 나는 동안 배경음악을 줄임
+    setDuck("shorts", canPlaySound && hoverIndex !== null);
   }, [hoverIndex, activated]);
+
+  useEffect(() => () => setDuck("shorts", false), []);
 
   // 다른 탭으로 넘어가면 6개 모두 일시정지, 돌아오면 다시 재생 (실습실 PC 부담 줄이기)
   useEffect(() => {

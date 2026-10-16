@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { FolderUp } from "lucide-react";
 import CropBoxSelector from "./CropBoxSelector.jsx";
 import { captureVideoFrame } from "../videoFrame.js";
 import { getCropBoxSetting, setCropBoxSetting } from "../settingsStorage.js";
@@ -103,7 +104,7 @@ export default function UploadForm({ onSubmit, onFileSubmit, disabled }) {
 
       {!selectedFile ? (
         <label htmlFor="upload-file-input" className="upload-file-label">
-          📁 영상 파일 직접 업로드
+          <FolderUp size={18} strokeWidth={2} aria-hidden="true" /> 영상 파일 직접 업로드
         </label>
       ) : (
         <div className="upload-preview">

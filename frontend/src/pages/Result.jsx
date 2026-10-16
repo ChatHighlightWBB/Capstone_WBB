@@ -90,7 +90,7 @@ export default function Result() {
       <main className="app-main">
         <Topbar />
         <div className="results">
-          <Link to="/" className="back-link">
+          <Link to="/main" className="back-link">
             <span aria-hidden="true">←</span> 다시 분석하기
           </Link>
 

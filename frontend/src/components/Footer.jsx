@@ -12,7 +12,7 @@ export default function Footer() {
     e.preventDefault();
     const el = document.getElementById(id);
     if (el) el.scrollIntoView({ behavior: "smooth" });
-    else navigate(`/#${id}`);
+    else navigate(`/main#${id}`);
   };
 
   return (

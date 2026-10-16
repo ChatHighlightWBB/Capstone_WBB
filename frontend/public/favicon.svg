@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <!-- 와바바 마스코트 "바바" 얼굴 (components/Mascot.jsx의 기본 표정과 같은 그림) -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FF6A5C"/>
+      <stop offset="55%" stop-color="#2FD18F"/>
+      <stop offset="100%" stop-color="#3B8BFF"/>
+    </linearGradient>
+  </defs>
+  <line x1="60" y1="20" x2="60" y2="8" stroke="#17171B" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="60" cy="7" r="6" fill="#FF3B30" stroke="#17171B" stroke-width="2.5"/>
+  <path d="M24 20 H96 A18 18 0 0 1 114 38 V78 A18 18 0 0 1 96 96 H46 L26 112 L30 96 H24 A18 18 0 0 1 6 78 V38 A18 18 0 0 1 24 20 Z" fill="url(#g)" stroke="#17171B" stroke-width="3.5" stroke-linejoin="round"/>
+  <ellipse cx="42" cy="54" rx="10" ry="11" fill="#fff" stroke="#17171B" stroke-width="3"/>
+  <ellipse cx="78" cy="54" rx="10" ry="11" fill="#fff" stroke="#17171B" stroke-width="3"/>
+  <circle cx="43" cy="55" r="5" fill="#17171B"/>
+  <circle cx="79" cy="55" r="5" fill="#17171B"/>
+  <path d="M50 74 Q60 84 70 74" fill="none" stroke="#17171B" stroke-width="3.5" stroke-linecap="round"/>
+</svg>

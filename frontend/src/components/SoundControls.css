@@ -1,0 +1,165 @@
+/* ===== 소리 설정 (스피커 버튼 + 패널) ===== */
+.sound-menu { position: relative; }
+
+.sound-btn { position: relative; }
+
+/* 배경음악이 나오는 중이면 버튼 아래에 작은 막대가 출렁임 */
+.sound-btn.is-playing::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 12px;
+  height: 3px;
+  margin-left: -6px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #FF6A5C, #2FD18F, #3B8BFF);
+  animation: sound-eq 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes sound-eq {
+  from { transform: scaleX(0.4); }
+  to { transform: scaleX(1); }
+}
+
+.sound-panel {
+  position: absolute;
+  right: 0;
+  z-index: 80;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 18px 16px;
+  border-radius: 20px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
+  animation: sound-panel-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.sound-menu-down .sound-panel { top: calc(100% + 10px); transform-origin: top right; }
+.sound-menu-up .sound-panel { bottom: calc(100% + 12px); transform-origin: bottom right; }
+
+.sound-panel-title { font-size: 15px; font-weight: 700; }
+
+.sound-row { display: flex; flex-direction: column; gap: 10px; }
+
+.sound-row-head { display: flex; align-items: center; gap: 10px; }
+
+.sound-row-toggle {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--np-accent, #3182F6) 14%, transparent);
+  color: var(--np-accent, #3182F6);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.sound-row-toggle:hover { filter: brightness(1.1); }
+
+/* 꺼짐: 회색 + 사선 */
+.sound-row-toggle.is-off { background: var(--surface-alt); color: var(--ink-soft); }
+
+.sound-row-toggle.is-off::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.sound-row-label { flex: 1; font-size: 14px; font-weight: 600; }
+.sound-row-value { font-size: 12px; color: var(--ink-soft); }
+
+.sound-row-note { margin: -2px 0 0; font-size: 12px; color: var(--ink-soft); }
+
+/* 볼륨 슬라이더: 채워진 부분은 강조색 */
+.sound-row input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  margin: 0;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--np-accent, #3182F6) var(--v), var(--surface-alt) var(--v));
+  cursor: pointer;
+}
+
+.sound-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--np-accent, #3182F6);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.sound-row input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--np-accent, #3182F6);
+}
+
+.sound-row input[type="range"]:focus-visible { outline: 2px solid var(--np-accent, #3182F6); outline-offset: 4px; }
+
+.sound-row.is-muted input[type="range"] { opacity: 0.4; cursor: not-allowed; }
+
+@keyframes sound-panel-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+.sound-menu-up .sound-panel { animation-name: sound-panel-in-up; }
+
+@keyframes sound-panel-in-up {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ===== 기존 화면용 떠 있는 버튼 (오른쪽 아래) ===== */
+.sound-floating {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 70;
+  padding: 5px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(12px);
+}
+
+.sound-floating-btn {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.sound-floating-btn:hover { background: var(--surface-alt); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sound-btn.is-playing::after,
+  .sound-panel { animation: none; }
+}

@@ -177,7 +177,7 @@ export default function Help() {
           </section>
 
           <p className="legal-meta">
-            <Link to="/">← 홈으로 돌아가기</Link>
+            <Link to="/main">← 홈으로 돌아가기</Link>
           </p>
         </div>
         <Footer />

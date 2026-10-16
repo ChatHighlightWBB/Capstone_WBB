@@ -4,7 +4,7 @@ import { getInitialTheme, applyTheme } from "../theme.js";
 import { getServerInfo } from "../api.js";
 
 const PAGE_META = {
-  "/": { title: "홈", icon: "🏠" },
+  "/main": { title: "홈", icon: "🏠" },
   "/settings": { title: "설정", icon: "⚙️" },
 };
 
@@ -80,11 +80,11 @@ export default function Topbar() {
       </div>
 
       <div className="topbar-right">
-        {location.pathname !== "/" && (
+        {location.pathname !== "/main" && (
           <button
             type="button"
             className="topbar-action-btn"
-            onClick={() => navigate("/")}
+            onClick={() => navigate("/main")}
             title="새 영상 분석 시작"
           >
             + 새 분석

@@ -6,7 +6,7 @@ import Mascot from "./Mascot.jsx";
 
 // 어느 페이지에 있든 항상 보이는 전역 메뉴
 const GLOBAL_LINKS = [
-  { to: "/", label: "🏠 홈" },
+  { to: "/main", label: "🏠 홈" },
   { to: "/settings", label: "⚙️ 설정" },
 ];
 
@@ -34,7 +34,7 @@ function scrollToId(id) {
 export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
-  const isHome = location.pathname === "/";
+  const isHome = location.pathname === "/main";
   const isResult = location.pathname.startsWith("/result/");
   const [theme, setTheme] = useState(getInitialTheme());
   const [toast, setToast] = useState(null);
@@ -77,7 +77,7 @@ export default function Sidebar() {
     if (isHome || isResult) {
       scrollToId(id);
     } else {
-      navigate(`/#${id}`);
+      navigate(`/main#${id}`);
     }
   };
 
@@ -85,7 +85,7 @@ export default function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <Link to="/" className="sidebar-brand">
+      <Link to="/main" className="sidebar-brand">
         <Mascot size={42} outline="#F3EFE7" className="sidebar-mascot" />
         <span className="sidebar-word">와바바</span>
       </Link>
@@ -121,7 +121,7 @@ export default function Sidebar() {
           🛠️ 오류 대처 방법
         </Link>
 
-        <Link to="/" className="sidebar-cta">
+        <Link to="/main" className="sidebar-cta">
           {isHome ? "새로 시작하기" : "다시 분석하기"}
         </Link>
 
