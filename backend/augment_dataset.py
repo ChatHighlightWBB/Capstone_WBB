@@ -17,7 +17,7 @@ def augment_minority_classes():
   print("🚀 [와바바 데이터 증강] 소수 감정 클래스 오버샘플링 작업 시작...")
 
   # 라벨별 데이터 분리
-  df_majority = df[df["label"] == 6]  # 중립 (7000+ 개)
+  df_majority = df[df["label"] == 6]  # 평상 (7000+ 개)
   df_list = [df_majority]
 
   # Target 샘플 수: 소수 감정들을 각각 1,200개 수준으로 증강

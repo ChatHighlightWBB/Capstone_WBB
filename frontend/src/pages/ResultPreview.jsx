@@ -5,7 +5,7 @@ import { Check, Clapperboard, Download, ExternalLink, Flame, Laugh, Leaf, Moon, 
 import EmotionChart from "../components/EmotionChart.jsx";
 import ChatLogWindow from "../components/ChatLogWindow.jsx";
 import { computeWbbScore } from "../components/WbbScore.jsx";
-import { colorForEmotion } from "../emotionColors.js";
+import { colorForEmotion, displayEmotion } from "../emotionColors.js";
 import { extractYoutubeId } from "../youtubeUtils.js";
 import { cancelAnalysis, pollResult } from "../api.js";
 import { setScene, sfx } from "../sound.js";
@@ -599,7 +599,7 @@ function HighlightItem({ h, timeSeries, open, onToggle, index }) {
             <span className="mono">
               {formatTime(h.start_time)} – {formatTime(h.end_time)}
             </span>
-            <span className="rp-hl-emotion">{h.streamer_speech_emotion}</span>
+            <span className="rp-hl-emotion">{displayEmotion(h.streamer_speech_emotion)}</span>
           </span>
           <span className="rp-hl-quote">“{h.streamer_speech_text.length > 90 ? h.streamer_speech_text.slice(0, 90) + "…" : h.streamer_speech_text}”</span>
         </span>
@@ -706,7 +706,7 @@ function DownloadSection({ finalVideoUrl, highlights }) {
                   {formatTime(h.start_time)}–{formatTime(h.end_time)}
                 </b>
                 <span>
-                  {h.streamer_speech_emotion} · {h.final_highlight_score.toFixed(1)}점
+                  {displayEmotion(h.streamer_speech_emotion)} · {h.final_highlight_score.toFixed(1)}점
                 </span>
               </span>
               <span className="rp-dl-btn">

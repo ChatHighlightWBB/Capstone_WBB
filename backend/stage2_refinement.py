@@ -77,7 +77,7 @@ class WBBStage2Refinement:
     def __init__(self, model_dir: str = "./kobert_wbb_model"):
         print("🧠 [1/3] 2차 검증용 KoBERT 및 Whisper STT 모델 로딩 중...")
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.emotion_labels = ["기쁨", "당황", "분노", "슬픔", "혐오", "공포", "중립"]
+        self.emotion_labels = ["기쁨", "당황", "분노", "슬픔", "혐오", "공포", "평상"]
 
         if os.path.exists(model_dir) and os.path.isdir(model_dir):
             # 학습 때 monologg/kobert 에 채팅 표현 9개(ㅋㅋㅋㅋ, ㄹㅈㄷ 등)를 추가한 토크나이저를 썼음.
@@ -158,7 +158,7 @@ class WBBStage2Refinement:
         """스트리머 발화 텍스트의 감정을 KoBERT로 분석"""
         clean_text = str(text).strip()
         if not clean_text:
-            return {"dominant_emotion": "중립", "joy_score": 0.0}
+            return {"dominant_emotion": "평상", "joy_score": 0.0}
 
         inputs = self.tokenizer(clean_text, return_tensors="pt", truncation=True, max_length=64, padding=True)
         inputs["input_ids"] = torch.clamp(inputs["input_ids"], min=0, max=self.vocab_size - 1)
