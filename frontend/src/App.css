@@ -702,6 +702,25 @@ a { color: inherit; text-decoration: none; }
   word-break: break-word;
 }
 
+/* 하이라이트 카드에서 영상과 연동될 때: 줄을 눌러 그 시각으로 이동, 지금 위치의 줄 강조 */
+.chat-log-window.is-sync .chat-log-line {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+
+.chat-log-window.is-sync .chat-log-line:not(.is-active):hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.chat-log-line.is-active {
+  background: rgba(255, 106, 92, 0.22);
+}
+
+.chat-log-line.is-active .chat-log-time {
+  color: #ff8a7e;
+}
+
 .chat-log-empty {
   font-size: 13px;
   color: var(--ink-soft);

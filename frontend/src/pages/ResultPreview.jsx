@@ -523,6 +523,46 @@ function ChartSection({ timeSeries, threshold }) {
 function HighlightItem({ h, timeSeries, open, onToggle, index }) {
   const color = colorForEmotion(h.streamer_speech_emotion);
   const sliced = (timeSeries || []).filter((d) => d.timestamp >= h.start_time && d.timestamp <= h.end_time);
+
+  // [영상·그래프·채팅 연동] 셋을 모두 "원본 방송 기준 초"로 맞춥니다.
+  //   원본 시각 = start_time - offset + 클립 재생 위치
+  //   offset(클립 앞쪽 여분): -c copy 로 자르면 클립이 start_time 직전 키프레임부터 시작해 길어짐.
+  //   늘어난 만큼을 앞쪽 여분으로 봄(근사). 최대 10초로 제한합니다.
+  // 상태는 카드마다 따로라서 다른 카드·화면에는 영향이 없습니다.
+  const videoRef = useRef(null);
+  const [offset, setOffset] = useState(0);
+  const [curSec, setCurSec] = useState(null);
+
+  const handleLoadedMetadata = (e) => {
+    const video = e.currentTarget;
+    // 길이를 아직 모르면(NaN·Infinity) 여분 없이 계산합니다.
+    const extra = Number.isFinite(video.duration) ? Math.max(0, Math.min(video.duration - h.duration, 10)) : 0;
+    setOffset(extra);
+    setCurSec(h.start_time - extra + video.currentTime);
+  };
+
+  const handleTimeUpdate = (e) => {
+    setCurSec(h.start_time - offset + e.currentTarget.currentTime);
+  };
+
+  // 원본 시각 T → 클립 안의 시각 (0 ~ 클립 길이로 자름)
+  const toClipSec = (t) => {
+    const video = videoRef.current;
+    const max = video && Number.isFinite(video.duration) ? video.duration : Infinity;
+    return Math.min(Math.max(t - h.start_time + offset, 0), max);
+  };
+
+  // 그래프·채팅에서 누른 원본 시각 T 로 클립을 옮깁니다.
+  const seekTo = (t) => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = toClipSec(t);
+    setCurSec(h.start_time - offset + video.currentTime);
+  };
+
+  // 클립이 없으면 연동할 영상이 없으니 props 를 넘기지 않아 예전 모습 그대로 둡니다.
+  const syncProps = h.clip_url ? { curSec, onSeek: seekTo } : {};
+
   return (
     <Reveal as="li" id={`hl-${h.rank}`} className={`rp-hl ${open ? "is-open" : ""}`} delay={Math.min(index, 4) * 90} style={{ "--c": color }}>
       <button type="button" className="rp-hl-head" onClick={onToggle} aria-expanded={open}>
@@ -547,18 +587,31 @@ function HighlightItem({ h, timeSeries, open, onToggle, index }) {
       {open && (
         <div className="rp-hl-body">
           {h.clip_url ? (
-            <video className="rp-hl-video" src={h.clip_url} controls playsInline />
+            <video
+              ref={videoRef}
+              className="rp-hl-video"
+              src={h.clip_url}
+              controls
+              playsInline
+              onLoadedMetadata={handleLoadedMetadata}
+              onTimeUpdate={handleTimeUpdate}
+            />
           ) : (
             <div className="rp-hl-empty">이 하이라이트의 개별 클립이 아직 없어요.</div>
           )}
           <div className="rp-hl-panels">
             <div className="rp-hl-panel">
               <h4>이 구간 감정 변화</h4>
-              <EmotionChart timeSeriesData={sliced} compact />
+              <EmotionChart
+                timeSeriesData={sliced}
+                compact
+                {...syncProps}
+                {...(h.clip_url ? { toClipSec, range: [h.start_time, h.end_time] } : {})}
+              />
             </div>
             <div className="rp-hl-panel">
               <h4>이 구간 채팅</h4>
-              <ChatLogWindow timeSeriesData={timeSeries} startTime={h.start_time} endTime={h.end_time} />
+              <ChatLogWindow timeSeriesData={timeSeries} startTime={h.start_time} endTime={h.end_time} {...syncProps} />
             </div>
           </div>
           {h.clip_url && (

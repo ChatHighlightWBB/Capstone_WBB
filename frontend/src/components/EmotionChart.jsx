@@ -9,6 +9,7 @@ import {
   Legend,
   ResponsiveContainer,
   ReferenceDot,
+  ReferenceLine,
 } from "recharts";
 import { EMOTION_FIELD_COLORS } from "../emotionColors.js";
 
@@ -34,9 +35,26 @@ function formatMinSec(rawSec) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-export default function EmotionChart({ timeSeriesData, recommendedJoyThreshold, compact = false }) {
+// [영상 연동] 하이라이트 카드에서만 넘기는 props (없으면 예전과 똑같이 그립니다)
+//   curSec    : 클립의 지금 재생 위치를 원본 방송 기준 초로 바꾼 값 → 세로선으로 표시
+//   onSeek    : 그래프를 누른 지점(원본 초)으로 클립을 옮기는 함수
+//   toClipSec : 원본 초 → 클립 안의 초 (툴팁에 "영상 m:ss" 를 같이 보여 주려고)
+//   range     : [구간 시작, 구간 끝] 원본 초. x 축을 이 범위의 숫자 축으로 고정합니다.
+export default function EmotionChart({
+  timeSeriesData,
+  recommendedJoyThreshold,
+  compact = false,
+  curSec,
+  onSeek,
+  toClipSec,
+  range,
+}) {
   const [showHelp, setShowHelp] = useState(false);
   if (!timeSeriesData || timeSeriesData.length === 0) return null;
+
+  // onSeek 가 있을 때만 연동 모드. 기본 x 축(category)은 데이터에 있는 값에만 선을 그을 수 있어서,
+  // 재생 위치(소수 초)를 그대로 따라가도록 숫자 축으로 바꿉니다.
+  const sync = typeof onSeek === "function";
 
   // ["와바바 포인트"] 채팅 반응(기쁨 지수)이 가장 높았던 지점을 찾아
   // 그래프 위에 별 마커로 표시합니다. 사용자가 "가장 뜨거웠던 순간"을
@@ -79,12 +97,28 @@ export default function EmotionChart({ timeSeriesData, recommendedJoyThreshold, 
         </p>
       )}
       <ResponsiveContainer width="100%" height={compact ? 160 : 320}>
-        <LineChart data={timeSeriesData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+        <LineChart
+          data={timeSeriesData}
+          margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
+          // 누른 지점에서 가장 가까운 데이터의 timestamp(원본 초)가 activeLabel 로 옵니다.
+          // recharts 가 그래프 바깥 div 에 cursor: default 를 직접 넣어서, 손가락 커서는 style 로 덮어씁니다.
+          onClick={sync ? (state) => state?.activeLabel != null && onSeek(state.activeLabel) : undefined}
+          style={sync ? { cursor: "pointer" } : undefined}
+        >
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="timestamp" tickFormatter={formatMinSec} hide={compact} />
+          <XAxis
+            dataKey="timestamp"
+            tickFormatter={formatMinSec}
+            hide={compact}
+            {...(sync ? { type: "number", domain: range ?? ["dataMin", "dataMax"] } : {})}
+          />
           <YAxis unit="%" hide={compact} width={compact ? 0 : undefined} />
           <Tooltip
-            labelFormatter={(sec) => `${formatMinSec(sec)} 지점`}
+            labelFormatter={(sec) =>
+              sync && toClipSec
+                ? `${formatMinSec(sec)} 지점 · 영상 ${formatMinSec(toClipSec(sec))}`
+                : `${formatMinSec(sec)} 지점`
+            }
             formatter={(value) => `${value}%`}
           />
           {!compact && <Legend />}
@@ -99,6 +133,10 @@ export default function EmotionChart({ timeSeriesData, recommendedJoyThreshold, 
               strokeWidth={compact ? 1.5 : 2}
             />
           ))}
+          {/* 클립의 지금 재생 위치. 구간 밖(클립 앞쪽 여분 등)이면 recharts 가 그리지 않습니다. */}
+          {sync && curSec != null && (
+            <ReferenceLine x={curSec} stroke="#FF6A5C" strokeWidth={2} />
+          )}
           {peakPoint && (
             <ReferenceDot
               x={peakPoint.timestamp}
