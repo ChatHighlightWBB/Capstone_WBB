@@ -2,6 +2,8 @@ import os
 import json
 import subprocess
 
+from cancel_utils import check_cancel  # [분석 취소] 클립마다·병합 직전에 사용자가 멈췄는지 확인
+
 class WBBFFmpegClipper:
     """
     [설명]
@@ -14,7 +16,7 @@ class WBBFFmpegClipper:
         self.temp_clip_dir = temp_clip_dir
         os.makedirs(self.temp_clip_dir, exist_ok=True)
 
-    def cut_and_merge_highlights(self, json_path: str = "final_highlight_candidates.json", output_video: str = "final_highlight.mp4"):
+    def cut_and_merge_highlights(self, json_path: str = "final_highlight_candidates.json", output_video: str = "final_highlight.mp4", cancel_event=None):
         if not os.path.exists(json_path):
             raise FileNotFoundError(f"'{json_path}' 파일이 없습니다. 2차 검증을 먼저 실행하세요.")
 
@@ -35,6 +37,7 @@ class WBBFFmpegClipper:
 
         # 1. 구간별 무인코딩 부분 추출
         for idx, h in enumerate(highlights):
+            check_cancel(cancel_event)  # [분석 취소] None 이면 그냥 지나감
             start = h["start_time"]
             duration = h["duration"]
             clip_path = os.path.join(self.temp_clip_dir, f"highlight_part_{idx}.mp4")
@@ -60,6 +63,7 @@ class WBBFFmpegClipper:
                 cf.write(f"file '{abs_path}'\n")
 
         # 3. 무인코딩 단일 영상 병합
+        check_cancel(cancel_event)  # [분석 취소] 병합 직전에 한 번 더 확인
         print(f"\n🎞️ [최종 병합 중...] ➔ '{output_video}'")
         merge_cmd = [
             "ffmpeg", "-y",

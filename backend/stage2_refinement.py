@@ -18,6 +18,7 @@ import torch
 import pandas as pd
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from cancel_utils import check_cancel  # [분석 취소] 후보마다 사용자가 멈췄는지 확인
 
 KOBERT_TOKENIZER_ID = "monologg/kobert"
 
@@ -182,7 +183,8 @@ class WBBStage2Refinement:
                           stage1_json: str = "stage1_candidates.json",
                           top_k: int = 10,
                           max_total_seconds: float = 900.0,
-                          output_json: str = "final_highlight_candidates.json"):
+                          output_json: str = "final_highlight_candidates.json",
+                          cancel_event=None):
         if not os.path.exists(stage1_json):
             raise FileNotFoundError(f"'{stage1_json}' 파일이 없습니다.")
 
@@ -214,6 +216,8 @@ class WBBStage2Refinement:
         os.makedirs(temp_audio_dir, exist_ok=True)
 
         for idx, clip in enumerate(candidates):
+            # [분석 취소] 후보 1개에 수십 초가 걸려서, 후보마다 시작 전에 멈췄는지 확인합니다(None 이면 그냥 지나감).
+            check_cancel(cancel_event)
             start = clip["start_time"]
             duration = clip["duration"]
             end = clip["end_time"]

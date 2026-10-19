@@ -18,6 +18,7 @@ const STATUS_TEXT = {
   analyzing: "분석 중",
   done: "완료",
   failed: "실패",
+  cancelled: "멈춤", // 사용자가 "분석 멈추기"로 멈춘 분석
 };
 
 // 다른 곳(다른 브라우저, 공유받은 링크 등)에서 받은 video_id로 바로 이동할 때 씁니다.

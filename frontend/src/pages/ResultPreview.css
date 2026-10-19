@@ -320,6 +320,26 @@
 
 .rp-an-source:hover { background: rgba(255, 255, 255, 0.06); }
 
+/* 분석 멈추기 버튼 (원본 영상 링크와 같은 어두운 테두리 버튼) */
+.rp-an-cancel { align-self: center; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.rp-an-cancel small { font-size: 13px; color: rgba(243, 239, 231, 0.55); }
+.rp-an-cancel .rp-an-cancel-error { color: var(--np-red); }
+
+.rp-an-cancel-btn {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(243, 239, 231, 0.18);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rp-an-cancel-btn:hover:not(:disabled) { background: rgba(255, 106, 92, 0.12); border-color: rgba(255, 106, 92, 0.5); }
+.rp-an-cancel-btn:disabled { opacity: 0.6; cursor: default; }
+
 /* ===== 결과: 스코어 히어로 ===== */
 .rp-hero {
   position: relative;
