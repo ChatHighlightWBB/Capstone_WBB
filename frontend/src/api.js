@@ -45,6 +45,19 @@ export async function getResult(videoId) {
   return res.json();
 }
 
+/**
+ * 대기 중이거나 진행 중인 분석을 멈춥니다. 서버는 바로 응답하지만(status: "cancelling"),
+ * 실제로 멈춰서 상태가 "cancelled" 가 되기까지는 몇 초~몇 분 걸릴 수 있어 폴링으로 확인합니다.
+ */
+export async function cancelAnalysis(videoId) {
+  const res = await fetch(`${API_BASE}/api/v1/cancel/${videoId}`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `분석 멈추기 실패 (HTTP ${res.status})`);
+  }
+  return res.json();
+}
+
 /** 설정 페이지에서 보관 기간(RETENTION_HOURS) 등 서버 정보를 보여줄 때 씁니다. */
 export async function getServerInfo() {
   const res = await fetch(`${API_BASE}/api/v1/info`);
@@ -59,7 +72,9 @@ export function pollResult(videoId, { intervalMs = 3000, onUpdate }) {
     try {
       const data = await getResult(videoId);
       onUpdate(data);
-      if (data.video_info.status === "done" || data.video_info.status === "failed") return;
+      // 끝난 상태(완료·실패·사용자가 멈춤)면 더 묻지 않습니다.
+      const status = data.video_info.status;
+      if (status === "done" || status === "failed" || status === "cancelled") return;
     } catch (e) {
       onUpdate(null, e);
       return;

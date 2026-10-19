@@ -7,7 +7,7 @@ import ChatLogWindow from "../components/ChatLogWindow.jsx";
 import { computeWbbScore } from "../components/WbbScore.jsx";
 import { colorForEmotion } from "../emotionColors.js";
 import { extractYoutubeId } from "../youtubeUtils.js";
-import { pollResult } from "../api.js";
+import { cancelAnalysis, pollResult } from "../api.js";
 import { setScene, sfx } from "../sound.js";
 import { getNotifyOnDone } from "../settingsStorage.js";
 import { TopNav, PipelineDevice, Reveal, SectionHead, StreamScene, STEPS, useScrollProgress } from "./MainPreview.jsx";
@@ -210,7 +210,8 @@ const STEP_COPY = {
   5: { title: "영상을 자르고 있어요", baba: "하이라이트 영상을 자르고 붙이고 있어요. 거의 다 왔어요!" },
 };
 
-function AnalyzingStage({ status, step, totalSteps, previewUrl, sourceUrl }) {
+// onCancel 을 넘기면 "분석 멈추기" 버튼을 보여 줍니다(예시 화면은 서버가 없어서 넘기지 않음).
+function AnalyzingStage({ status, step, totalSteps, previewUrl, sourceUrl, onCancel }) {
   const isPre = status === "queued" || status === "downloading";
   const current = isPre ? 0 : step ?? 1;
   const total = totalSteps ?? 5;
@@ -231,6 +232,23 @@ function AnalyzingStage({ status, step, totalSteps, previewUrl, sourceUrl }) {
     setScene(`analyze-${isPre ? 0 : current}`);
     if (!isPre) sfx("blip");
   }, [isPre, status, current]);
+
+  // [분석 멈추기] 서버는 바로 응답하지만 실제로 멈추기까지 시간이 걸려서,
+  // 한 번 누르면 "멈추는 중…" 으로 바꾸고 다시 못 누르게 합니다. 멈추면 폴링으로 "cancelled" 를 받아 화면이 바뀝니다.
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState(null);
+  const handleCancel = async () => {
+    if (!window.confirm("분석을 멈출까요? 멈춘 분석은 이어서 할 수 없어요.")) return;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      await onCancel();
+    } catch (e) {
+      // 요청 자체가 실패하면 다시 누를 수 있게 되돌립니다.
+      setCancelling(false);
+      setCancelError(e.message);
+    }
+  };
 
   return (
     <section className="rp-an" style={{ "--step-color": stepColor }}>
@@ -274,6 +292,15 @@ function AnalyzingStage({ status, step, totalSteps, previewUrl, sourceUrl }) {
           <a href={sourceUrl} target="_blank" rel="noreferrer" className="rp-an-source">
             <ExternalLink size={15} strokeWidth={2.2} /> 원본 영상 보러가기
           </a>
+        )}
+        {onCancel && (
+          <div className="rp-an-cancel">
+            <button type="button" className="rp-an-cancel-btn" onClick={handleCancel} disabled={cancelling}>
+              {cancelling ? "멈추는 중…" : "분석 멈추기"}
+            </button>
+            {cancelling && <small>지금 하던 작업을 정리하고 멈춰요. 최대 몇 분 걸릴 수 있어요.</small>}
+            {cancelError && <small className="rp-an-cancel-error">{cancelError}</small>}
+          </div>
         )}
       </div>
 
@@ -783,7 +810,8 @@ export default function ResultPreview() {
   const sourceUrl = isDemo ? null : state.sourceUrl;
 
   const status = result?.video_info?.status;
-  const inProgress = !error && (!result || (status !== "done" && status !== "failed"));
+  // "cancelled"(사용자가 멈춤)도 끝난 상태로 봐서 분석 중 화면 대신 멈춤 카드를 보여 줍니다.
+  const inProgress = !error && (!result || (status !== "done" && status !== "failed" && status !== "cancelled"));
   const highlights = result?.highlight_result?.highlights ?? [];
   const timeSeries = result?.emotion_timeseries?.time_series_data;
   const done = status === "done";
@@ -794,9 +822,9 @@ export default function ResultPreview() {
     1
   );
 
-  // 하이라이트가 없거나 실패하면 분석 곡을 멈추고 메인 곡으로
+  // 하이라이트가 없거나 실패하거나 사용자가 멈추면 분석 곡을 멈추고 메인 곡으로
   useEffect(() => {
-    if (error || status === "failed" || (done && !hasHighlights)) setScene("main");
+    if (error || status === "failed" || status === "cancelled" || (done && !hasHighlights)) setScene("main");
   }, [error, status, done, hasHighlights]);
 
   const pickHighlight = (rank) => {
@@ -820,7 +848,23 @@ export default function ResultPreview() {
           totalSteps={result?.video_info?.total_steps}
           previewUrl={previewUrl}
           sourceUrl={sourceUrl}
+          onCancel={isDemo ? undefined : () => cancelAnalysis(videoId)}
         />
+      )}
+
+      {status === "cancelled" && (
+        <StateCard
+          mood="thinking"
+          title="분석을 멈췄어요"
+          actions={
+            <Link to="/main" className="rp-btn rp-btn-primary">
+              다른 영상 분석하러 가기
+            </Link>
+          }
+        >
+          <p>{result?.video_info?.error || "사용자가 분석을 멈췄어요."}</p>
+          <p className="rp-state-sub">멈춘 분석은 이어서 할 수 없어요. 필요하면 처음부터 다시 분석해 주세요.</p>
+        </StateCard>
       )}
 
       {(error || status === "failed") && (

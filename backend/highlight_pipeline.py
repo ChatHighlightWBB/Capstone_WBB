@@ -20,6 +20,7 @@ from automated_dataset_generator import WBBEmotionDatasetGenerator
 from sliding_window_nlp import WBBSlidingWindowDetector
 from stage2_refinement import WBBStage2Refinement
 from ffmpeg_clipper import WBBFFmpegClipper
+from cancel_utils import check_cancel
 
 class WBBAutoHighlightPipeline:
     """
@@ -52,7 +53,7 @@ class WBBAutoHighlightPipeline:
     }
 
     def run_full_pipeline(self, video_path: str = "./test_sample.mp4", crop_box: tuple = None,
-                           on_progress=None) -> dict:
+                           on_progress=None, cancel_event=None, register_proc=None) -> dict:
         """
         [설명] 
         영상 경로를 입력받아 Step 1 ~ Step 5 전 과정을 순차 실행하고 
@@ -65,6 +66,11 @@ class WBBAutoHighlightPipeline:
         on_progress(step: int, label: str)를 넘기면 각 단계 시작 시점에
         호출됩니다. server.py가 이걸로 실시간 진행 상황을 클라이언트에
         전달합니다. 넘기지 않으면(None) 기존과 동일하게 동작합니다.
+
+        [분석 취소] cancel_event(threading.Event)를 넘기면 각 단계 시작 전과
+        Step 4·5 반복문 안에서 확인해, 켜져 있으면 AnalysisCancelled 로 멈춥니다.
+        register_proc(proc)를 넘기면 Step 1 OCR 워커 프로세스를 등록해서 밖(server.py)에서
+        바로 끌 수 있게 합니다(돌려받은 함수를 부르면 등록 해제). 둘 다 None 이면 기존과 같습니다.
         """
         start_total_time = time.time()
 
@@ -83,6 +89,7 @@ class WBBAutoHighlightPipeline:
         # ----------------------------------------------------
         # [Step 1] 영상 프레임 내 채팅 OCR 추출 (PaddleOCR)
         # ----------------------------------------------------
+        check_cancel(cancel_event)
         _report(1)
         ocr_csv_path = "extracted_ocr_chats.csv"
         print("\n▶️ [STEP 1/5] PaddleOCR 실시간 채팅 추출 시작 (별도 프로세스)...")
@@ -117,10 +124,26 @@ class WBBAutoHighlightPipeline:
         worker_env["PYTHONIOENCODING"] = "utf-8"
         worker_env["PYTHONUTF8"] = "1"
 
-        result = subprocess.run(
-            cmd, capture_output=True, text=True,
+        # [분석 취소] subprocess.run 대신 Popen 을 직접 들고 있어야 취소할 때 밖에서 워커를 끌 수 있습니다.
+        # 인자(capture_output=True ≒ stdout/stderr=PIPE, env·encoding·errors)와 결과 모양은 subprocess.run 과 같습니다.
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             encoding="utf-8", errors="replace", env=worker_env,
         )
+        unregister_proc = register_proc(proc) if register_proc else None
+        try:
+            stdout, stderr = proc.communicate()
+        except BaseException:
+            # subprocess.run 처럼, 기다리다 예외가 나면 워커를 끄고 끝날 때까지 기다린 뒤 다시 던집니다.
+            proc.kill()
+            proc.wait()
+            raise
+        finally:
+            if unregister_proc:
+                unregister_proc()
+        result = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+        # 취소로 워커가 꺼졌으면 "OCR 워커 실패" 가 아니라 취소로 끝냅니다.
+        check_cancel(cancel_event)
         # 워커 프로세스의 출력을 그대로 이어서 보여줘서, 기존 로그와
         # 이어지는 것처럼 보이게 합니다 (Auto-ROI 탐지 로그, 프레임별
         # 인식 로그 등이 그대로 여기 찍힙니다).
@@ -133,6 +156,7 @@ class WBBAutoHighlightPipeline:
         # ----------------------------------------------------
         # [Step 2] KoBERT 7대 감정 정량화 및 시계열 데이터셋 생성
         # ----------------------------------------------------
+        check_cancel(cancel_event)
         _report(2)
         emotion_csv_path = "video_emotion_timeseries.csv"
         emotion_json_path = "video_emotion_timeseries.json"
@@ -147,6 +171,7 @@ class WBBAutoHighlightPipeline:
         # ----------------------------------------------------
         # [Step 3] 30초 Sliding Window 및 1차 후보 클립 추출
         # ----------------------------------------------------
+        check_cancel(cancel_event)
         _report(3)
         stage1_json_path = "stage1_candidates.json"
         print("\n▶️ [STEP 3/5] 30초 Sliding Window 1차 하이라이트 후보 탐지...")
@@ -209,7 +234,6 @@ class WBBAutoHighlightPipeline:
         chat_lines = None
         if chat_sim_on and audio_db_per_sec is not None:
             try:
-                import json
                 with open(chat_lines_path, "r", encoding="utf-8") as lf:
                     chat_lines = [json.loads(line) for line in lf if line.strip()]
                 if not chat_lines:
@@ -268,24 +292,28 @@ class WBBAutoHighlightPipeline:
         # ----------------------------------------------------
         # [Step 4] 2차 정밀 검증 (Whisper STT + 스트리머 발화 감정 분석)
         # ----------------------------------------------------
+        check_cancel(cancel_event)
         _report(4)
         print("\n▶️ [STEP 4/5] Whisper STT 스트리머 음성 2차 정밀 검증...")
         self.stage2_refiner.refine_candidates(
             video_path=video_path,
             stage1_json=stage1_json_path,
-            output_json=final_candidates_json
+            output_json=final_candidates_json,
+            cancel_event=cancel_event  # 후보 반복문 앞에서 취소 확인
         )
 
         # ----------------------------------------------------
         # [Step 5] FFmpeg 무인코딩 영상 클리핑 및 최종 병합
         # ----------------------------------------------------
+        check_cancel(cancel_event)
         _report(5)
         final_video_path = "final_highlight.mp4"
         print("\n▶️ [STEP 5/5] FFmpeg 무인코딩 고속 클리핑 및 병합...")
         self.clipper.video_path = video_path
         highlight_clip_paths = self.clipper.cut_and_merge_highlights(
             json_path=final_candidates_json,
-            output_video=final_video_path
+            output_video=final_video_path,
+            cancel_event=cancel_event  # 클립 반복문 앞과 병합 직전에 취소 확인
         )
 
         total_elapsed = round(time.time() - start_total_time, 2)

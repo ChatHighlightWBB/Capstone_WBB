@@ -38,3 +38,5 @@ backend/stage1_candidates.csv
 backend/stage1_candidates.json
 backend/final_highlight_candidates.csv
 backend/final_highlight_candidates.json
+backend/chat_lines.jsonl
+backend/visual_change.csv

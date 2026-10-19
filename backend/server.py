@@ -28,7 +28,9 @@ import glob
 import time
 import json
 import shutil
+import socket
 import asyncio
+import threading
 import subprocess
 import traceback
 import faulthandler
@@ -46,6 +48,7 @@ from pydantic import BaseModel, HttpUrl
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from highlight_pipeline import WBBAutoHighlightPipeline
+from cancel_utils import AnalysisCancelled, check_cancel
 
 # torch 등 네이티브 코드에서 access violation 같은 크래시가 나면 파이썬 예외가
 # 아니라서 traceback 없이 프로세스가 죽습니다. 그때라도 모든 스레드의 파이썬
@@ -104,6 +107,18 @@ PROGRESS: Dict[str, Dict[str, Any]] = {}
 # 바로 만들면 uvicorn 루프와 어긋나 대기 시 RuntimeError가 납니다 → lifespan에서 생성.
 ANALYSIS_LOCK: Optional[asyncio.Lock] = None
 
+# [분석 취소] video_id -> threading.Event. "분석 멈추기"(POST /api/v1/cancel/{id})를 누르면 켜지고,
+# 다운로드 반복문과 파이프라인이 단계·반복문 사이에서 이 표시를 확인해 멈춥니다(cancel_utils.check_cancel).
+CANCEL_EVENTS: Dict[str, threading.Event] = {}
+# video_id -> 지금 돌고 있는 외부 프로그램(Popen) 목록. 취소하면 끝날 때까지 기다리지 않고 바로 끄려고 들고 있습니다.
+RUNNING_PROCS: Dict[str, List[subprocess.Popen]] = {}
+# 위 두 dict 는 이벤트 루프(취소 API)와 파이프라인 스레드가 같이 만지므로 스레드 락으로 보호합니다.
+CANCEL_STATE_LOCK = threading.Lock()
+
+# 작업 문서에 같이 남기는 이 PC 이름. 서버가 다시 켜질 때 "이 PC에서 돌다 끊긴" 작업만 골라 정리하려고 씁니다.
+# (DB 는 여러 PC 가 같이 쓰므로, 다른 PC 에서 돌고 있는 작업은 건드리면 안 됩니다)
+HOST_NAME = socket.gethostname()
+
 # 파이프라인 모듈들이 작업 폴더(backend/)에 고정된 이름으로 쓰는 중간 산출물.
 # 이전 작업 것이 남아 있으면 다음 작업 결과에 그대로 섞여 들어갑니다.
 PIPELINE_TEMP_FILES = [
@@ -149,6 +164,64 @@ def _clear_pipeline_temp_files():
                     os.remove(entry)
             except OSError as e:
                 print(f"⚠️ [정리] {entry} 삭제 실패: {e}")
+
+
+def _get_cancel_event(video_id: str) -> threading.Event:
+    """그 작업의 취소 표시를 돌려줍니다. 없으면 새로 만듭니다(작업 시작 전에 취소가 먼저 와도 같은 Event 를 씀)."""
+    with CANCEL_STATE_LOCK:
+        return CANCEL_EVENTS.setdefault(video_id, threading.Event())
+
+
+def register_proc(video_id: str, proc: subprocess.Popen):
+    """실행 중인 외부 프로그램을 그 작업에 등록합니다. 취소 API 가 kill_procs 로 끌 수 있게 됩니다."""
+    with CANCEL_STATE_LOCK:
+        RUNNING_PROCS.setdefault(video_id, []).append(proc)
+        event = CANCEL_EVENTS.get(video_id)
+    # 프로그램을 띄우는 사이에 취소가 먼저 들어왔으면(등록 전이라 kill_procs 가 못 봄) 여기서 바로 끕니다.
+    if event is not None and event.is_set():
+        kill_procs(video_id)
+
+
+def unregister_proc(video_id: str, proc: subprocess.Popen):
+    """끝난 외부 프로그램을 목록에서 뺍니다."""
+    with CANCEL_STATE_LOCK:
+        procs = RUNNING_PROCS.get(video_id)
+        if procs and proc in procs:
+            procs.remove(proc)
+
+
+def kill_procs(video_id: str):
+    """
+    그 작업에 등록된 외부 프로그램을 모두 끕니다. 이미 끝난 프로그램은 건너뜁니다.
+    Windows 에서는 taskkill /T 로 자식 프로세스까지 끕니다 — 다운로드는 shell=True 로 띄워서
+    proc 자체는 cmd.exe 이고 실제 yt-dlp·ffmpeg 는 그 자식이라, proc.kill() 만으로는 남기 때문입니다.
+    """
+    with CANCEL_STATE_LOCK:
+        procs = list(RUNNING_PROCS.get(video_id, []))
+    for proc in procs:
+        if proc.poll() is not None:
+            continue  # 이미 끝남
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            else:
+                proc.kill()
+        except OSError as e:
+            print(f"⚠️ [취소] {video_id} 외부 프로그램(PID {proc.pid}) 종료 실패: {e}")
+
+
+def _proc_registrar(video_id: str):
+    """
+    파이프라인에 넘길 등록 함수를 만듭니다. register(proc)를 부르면 등록하고,
+    돌려받은 함수를 부르면 등록을 해제합니다(파이프라인은 video_id 를 몰라도 됨).
+    """
+    def _register(proc: subprocess.Popen):
+        register_proc(video_id, proc)
+        return lambda: unregister_proc(video_id, proc)
+    return _register
 
 
 async def cleanup_expired_jobs():
@@ -212,6 +285,28 @@ async def lifespan(app: FastAPI):
     db.db = db.client[DB_NAME]
     print(f"✅ [WBB DB] MongoDB Atlas ({DB_NAME}) 연동 성공!")
 
+    # [재시작 정리] 서버가 분석 도중 꺼졌다 켜지면 그 작업은 이어지지 않는데, DB 에는 "진행 중"으로
+    # 남아 프론트가 끝없이 기다립니다. 이 PC 에서 돌던(host 가 같은) 진행 중 작업만 실패로 바꿉니다.
+    # host 필드가 없는 옛 문서와 다른 PC 의 작업은 건드리지 않습니다.
+    try:
+        stale = await db.db["jobs"].update_many(
+            {
+                "host": HOST_NAME,
+                "status": {"$in": [JobStatus.QUEUED.value, JobStatus.DOWNLOADING.value, JobStatus.ANALYZING.value]},
+            },
+            {
+                "$set": {
+                    "status": JobStatus.FAILED.value,
+                    "error": "서버가 다시 시작되어 분석이 중단됐어요. 다시 분석해 주세요.",
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        print(f"🧹 [재시작 정리] 이 PC({HOST_NAME})에서 중단된 작업 {stale.modified_count}건을 실패로 표시")
+    except Exception as e:
+        # DB 연결이 안 되더라도 서버 자체는 뜨게 둡니다.
+        print(f"⚠️ [재시작 정리] 중단된 작업 정리 실패: {e}")
+
     global pipeline, ANALYSIS_LOCK
     ANALYSIS_LOCK = asyncio.Lock()  # 실행 중인 uvicorn 루프 안에서 생성 (위 ANALYSIS_LOCK 주석 참고)
 
@@ -271,6 +366,7 @@ class JobStatus(str, Enum):
     ANALYZING = "analyzing"
     DONE = "done"
     FAILED = "failed"
+    CANCELLED = "cancelled"  # 사용자가 "분석 멈추기"로 멈춘 작업
 
 
 class AnalyzeRequest(BaseModel):
@@ -451,8 +547,14 @@ async def _finalize_success(video_id: str, result_meta: dict):
 
 
 async def _set_status(video_id: str, status: "JobStatus", **extra):
+    # [분석 취소] 이미 cancelled 로 기록된 작업은 다른 상태(queued·downloading·analyzing·failed)로
+    # 덮어쓰지 않습니다. 취소 API 가 대기 중 작업을 바로 cancelled 로 바꾼 뒤, 작업 쪽이 늦게
+    # queued 등을 써서 "취소가 풀린 것처럼" 보이는 일을 막기 위함입니다. cancelled 는 항상 씁니다.
+    query = {"video_id": video_id}
+    if status != JobStatus.CANCELLED:
+        query["status"] = {"$ne": JobStatus.CANCELLED.value}
     await db.db["jobs"].update_one(
-        {"video_id": video_id},
+        query,
         {"$set": {"status": status.value, "updated_at": datetime.utcnow(), **extra}},
     )
 
@@ -476,29 +578,85 @@ async def _run_pipeline_exclusively(video_id: str, video_path: str, crop_box_ove
         PROGRESS[video_id] = {"step": step, "total_steps": 5, "label": label}
 
     effective_crop_box = tuple(crop_box_override) if crop_box_override else CHAT_CROP_BOX
+    cancel_event = _get_cancel_event(video_id)
 
     if ANALYSIS_LOCK.locked():
         print(f"⏳ [{video_id}] 앞선 분석이 끝날 때까지 대기합니다.")
     await _set_status(video_id, JobStatus.QUEUED)
 
     async with ANALYSIS_LOCK:
+        # [분석 취소] 기다리는 동안 취소된 작업은 아무것도 하지 않고 바로 빠져나갑니다
+        # (AnalysisCancelled 가 나도 async with 가 락을 풀어 주므로 다음 작업이 이어서 시작됨).
+        check_cancel(cancel_event)
         # 락을 잡은 뒤에 지워야 합니다. 락 밖에서 지우면 지금 돌고 있는
         # 앞 작업의 중간 파일을 지워버릴 수 있습니다.
         _clear_pipeline_temp_files()
         await _set_status(video_id, JobStatus.ANALYZING)
+        # 파이프라인 스레드는 밖에서 강제로 멈출 수 없어서, 취소 표시(cancel_event)를 넘겨
+        # 스스로 확인하고 멈추게 합니다. 락은 이 스레드가 끝난 뒤에만 풀립니다.
         result_meta = await loop.run_in_executor(
             None,
             lambda: pipeline.run_full_pipeline(
-                video_path=video_path, crop_box=effective_crop_box, on_progress=_on_progress
+                video_path=video_path, crop_box=effective_crop_box, on_progress=_on_progress,
+                cancel_event=cancel_event, register_proc=_proc_registrar(video_id),
             ),
         )
+        # 결과 저장 직전에 한 번 더 확인 — 완료(done)와 취소(cancelled)가 서로 덮어쓰지 않게 합니다.
+        check_cancel(cancel_event)
         await _finalize_success(video_id, result_meta)
+
+
+async def _mark_job_ended_by_error(video_id: str, e: Exception):
+    """
+    작업이 예외로 끝났을 때 상태를 기록합니다.
+    취소로 멈춘 경우(AnalysisCancelled, 또는 외부 프로그램을 꺼서 다른 예외가 난 경우)는 cancelled,
+    그 외에는 지금까지처럼 failed 로 남깁니다.
+    """
+    event = CANCEL_EVENTS.get(video_id)
+    if isinstance(e, AnalysisCancelled) or (event is not None and event.is_set()):
+        print(f"⏹️ [WBB] {video_id} 사용자가 분석을 멈췄습니다. ({type(e).__name__})")
+        await _set_status(video_id, JobStatus.CANCELLED, error="사용자가 분석을 멈췄어요.")
+        return
+    print(f"❌ [WBB] {video_id} 분석 실패: {e}")
+    traceback.print_exc()
+    await _set_status(video_id, JobStatus.FAILED, error=str(e))
+
+
+def _forget_cancel_state(video_id: str):
+    """작업이 끝나면 그 작업의 취소 표시와 외부 프로그램 목록을 지웁니다."""
+    with CANCEL_STATE_LOCK:
+        CANCEL_EVENTS.pop(video_id, None)
+        RUNNING_PROCS.pop(video_id, None)
 
 
 async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_box_override=None):
     output_path = os.path.join(TEMP_STORAGE_DIR, f"{video_id}_480p.mp4")
+    cancel_event = _get_cancel_event(video_id)
+
+    def _run_download_command():
+        """
+        subprocess.run 과 같은 일을 하되 Popen 을 직접 들고 있어서, 취소 API 가 실행 중인
+        다운로드(yt-dlp·streamlink)를 바로 끌 수 있게 합니다. 반환값도 subprocess.run 과 같은 모양입니다.
+        """
+        proc = subprocess.Popen(
+            command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, errors="replace",
+        )
+        register_proc(video_id, proc)
+        try:
+            stdout, stderr = proc.communicate()
+        except BaseException:
+            # subprocess.run 처럼, 기다리다 예외가 나면 프로그램을 끄고 끝날 때까지 기다린 뒤 다시 던집니다.
+            proc.kill()
+            proc.wait()
+            raise
+        finally:
+            unregister_proc(video_id, proc)
+        return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
 
     try:
+        # [분석 취소] 시작 전에 이미 취소됐으면 아무것도 하지 않고 끝냅니다(try 안이라 finally 정리는 그대로 돎).
+        check_cancel(cancel_event)
         # Step 0: 스트림 다운로드 (프록시용 저화질)
         await _set_status(video_id, JobStatus.DOWNLOADING)
         command = build_download_command(platform, video_url, output_path)
@@ -511,13 +669,10 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
         MAX_DOWNLOAD_RETRIES = 3
         result = None
         for attempt in range(1, MAX_DOWNLOAD_RETRIES + 1):
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True, errors="replace",
-                ),
-            )
+            check_cancel(cancel_event)  # [분석 취소] 매 시도 전에 확인
+            result = await loop.run_in_executor(None, _run_download_command)
+            # 취소로 다운로드가 꺼졌으면 "실패 → 재시도" 로 넘어가지 않고 바로 멈춥니다.
+            check_cancel(cancel_event)
             if result.returncode == 0 and os.path.exists(output_path):
                 break
             # 포맷 자체가 없는 경우는 다시 시도해도 결과가 같으므로 바로 포기합니다.
@@ -529,8 +684,11 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
                   f"{'재시도합니다...' if attempt < MAX_DOWNLOAD_RETRIES else '포기합니다.'}")
             if attempt < MAX_DOWNLOAD_RETRIES:
                 await asyncio.sleep(5 * attempt)  # 5초, 10초 간격으로 점점 늘려가며 재시도
+                check_cancel(cancel_event)  # [분석 취소] 재시도 대기 중에 취소됐는지 확인
 
         if result.returncode != 0 or not os.path.exists(output_path):
+            # [분석 취소] 취소된 작업은 치지직/SOOP 직접 다운로더로 넘어가지 않습니다.
+            check_cancel(cancel_event)
             # [추가] yt-dlp/streamlink가 끝까지 실패하면, 마지막 수단으로
             # 플랫폼 자체 API/브라우저 자동화 직접 다운로더를 시도합니다.
             print(f"⚠️ [{video_id}] yt-dlp/streamlink 전체 실패 — 직접 다운로드 방식으로 최종 시도합니다.")
@@ -564,12 +722,12 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
         await _run_pipeline_exclusively(video_id, output_path, crop_box_override)
 
     except Exception as e:
-        print(f"❌ [WBB] {video_id} 분석 실패: {e}")
-        traceback.print_exc()
-        await _set_status(video_id, JobStatus.FAILED, error=str(e))
+        # 취소면 cancelled, 그 외는 지금까지처럼 failed
+        await _mark_job_ended_by_error(video_id, e)
 
     finally:
         PROGRESS.pop(video_id, None)
+        _forget_cancel_state(video_id)
         # 디스크 정리 (다운로드한 임시 파일만 삭제, 결과물은 outputs/에 보존)
         # 파일 이름의 _480p는 예전 이름 그대로이며, 유튜브는 실제로 720p입니다.
         if os.path.exists(output_path):
@@ -577,19 +735,30 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
                 os.remove(output_path)
             except OSError:
                 pass
+        # [분석 취소] 다운로드를 중간에 끄면 yt-dlp 가 받다 만 조각(.part, .ytdl, .temp 등)이 남습니다.
+        # 이 작업 것만 지우도록 이름이 "{video_id}_" 로 시작하는 파일만 고릅니다. 사용 중이라 못 지우면 넘어갑니다.
+        for leftover in glob.glob(os.path.join(TEMP_STORAGE_DIR, f"{glob.escape(video_id)}_*")):
+            try:
+                if os.path.isfile(leftover):
+                    os.remove(leftover)
+            except OSError:
+                pass
 
 
 async def run_analysis_job_from_file(video_path: str, video_id: str, crop_box_override=None):
+    cancel_event = _get_cancel_event(video_id)
     try:
+        # [분석 취소] 시작 전에 이미 취소됐으면 아무것도 하지 않고 끝냅니다(try 안이라 finally 정리는 그대로 돎).
+        check_cancel(cancel_event)
         await _run_pipeline_exclusively(video_id, video_path, crop_box_override)
 
     except Exception as e:
-        print(f"❌ [WBB] {video_id} 분석 실패: {e}")
-        traceback.print_exc()
-        await _set_status(video_id, JobStatus.FAILED, error=str(e))
+        # 취소면 cancelled, 그 외는 지금까지처럼 failed
+        await _mark_job_ended_by_error(video_id, e)
 
     finally:
         PROGRESS.pop(video_id, None)
+        _forget_cancel_state(video_id)
         if os.path.exists(video_path):
             try:
                 os.remove(video_path)
@@ -623,6 +792,7 @@ async def start_analysis(request_data: AnalyzeRequest, background_tasks: Backgro
             "video_url": url_str,
             "status": JobStatus.QUEUED.value,
             "created_at": datetime.utcnow(),
+            "host": HOST_NAME,  # 이 작업을 돌리는 PC (서버 재시작 정리용)
         }
     )
 
@@ -661,6 +831,7 @@ async def start_analysis_from_upload(
             "platform": "upload",
             "status": JobStatus.QUEUED.value,
             "created_at": datetime.utcnow(),
+            "host": HOST_NAME,  # 이 작업을 돌리는 PC (서버 재시작 정리용)
         }
     )
 
@@ -671,6 +842,48 @@ async def start_analysis_from_upload(
         status=JobStatus.QUEUED,
         message="업로드된 영상 분석이 큐에 등록되었습니다.",
     )
+
+
+@app.post("/api/v1/cancel/{video_id}")
+async def cancel_analysis(video_id: str):
+    """
+    [분석 취소] 대기 중이거나 진행 중인 분석을 멈춥니다.
+    여기서는 취소 표시를 켜고 실행 중인 외부 프로그램을 끈 뒤 바로 응답합니다.
+    실제 cancelled 기록은 작업 쪽(run_analysis_job 등)이 멈춘 지점에서 남깁니다 —
+    파이프라인 스레드가 다음 확인 지점에 닿을 때까지 몇 초~몇 분 걸릴 수 있습니다.
+    """
+    doc = await db.db["jobs"].find_one({"video_id": video_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="존재하지 않는 video_id 입니다.")
+
+    status = doc.get("status")
+    # 이미 끝난 작업은 건드리지 않고 지금 상태를 그대로 알려줍니다.
+    if status in (JobStatus.DONE.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value):
+        return {"status": status, "cancelled": False}
+
+    # 취소 표시(Event)와 외부 프로그램 목록은 이 서버 메모리에만 있어서, 다른 PC 의 서버가 돌리는 작업은
+    # 여기서 멈출 수 없습니다. host 가 없는 옛 문서는 예전처럼 이 서버의 작업으로 보고 처리합니다.
+    job_host = doc.get("host")
+    if job_host and job_host != HOST_NAME:
+        raise HTTPException(status_code=409, detail="다른 PC에서 실행 중인 분석이라 여기서 멈출 수 없어요.")
+
+    _get_cancel_event(video_id).set()
+
+    # 대기 중(queued)이면 아직 아무것도 실행하지 않으므로 바로 cancelled 로 기록합니다.
+    # 그 작업은 나중에 락을 잡거나 다운로드를 시작하려는 순간 check_cancel 로 빠져나가며 같은 cancelled 를 다시 남깁니다.
+    if status == JobStatus.QUEUED.value:
+        await _set_status(video_id, JobStatus.CANCELLED, error="사용자가 분석을 멈췄어요.", cancel_requested=True)
+        print(f"⏹️ [WBB] {video_id} 대기 중인 분석을 바로 멈춤")
+        return {"status": JobStatus.CANCELLED.value, "cancelled": True}
+
+    # taskkill 이 잠깐 걸릴 수 있어 이벤트 루프를 막지 않도록 스레드에서 끕니다.
+    await asyncio.get_running_loop().run_in_executor(None, kill_procs, video_id)
+    await db.db["jobs"].update_one(
+        {"video_id": video_id},
+        {"$set": {"cancel_requested": True, "updated_at": datetime.utcnow()}},
+    )
+    print(f"⏹️ [WBB] {video_id} 분석 멈추기 요청 (현재 상태: {status})")
+    return {"status": "cancelling", "cancelled": True}
 
 
 @app.get("/api/v1/result/{video_id}", response_model=AnalyzeResultResponse)
