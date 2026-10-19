@@ -547,8 +547,14 @@ async def _finalize_success(video_id: str, result_meta: dict):
 
 
 async def _set_status(video_id: str, status: "JobStatus", **extra):
+    # [분석 취소] 이미 cancelled 로 기록된 작업은 다른 상태(queued·downloading·analyzing·failed)로
+    # 덮어쓰지 않습니다. 취소 API 가 대기 중 작업을 바로 cancelled 로 바꾼 뒤, 작업 쪽이 늦게
+    # queued 등을 써서 "취소가 풀린 것처럼" 보이는 일을 막기 위함입니다. cancelled 는 항상 씁니다.
+    query = {"video_id": video_id}
+    if status != JobStatus.CANCELLED:
+        query["status"] = {"$ne": JobStatus.CANCELLED.value}
     await db.db["jobs"].update_one(
-        {"video_id": video_id},
+        query,
         {"$set": {"status": status.value, "updated_at": datetime.utcnow(), **extra}},
     )
 
@@ -649,6 +655,8 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
         return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
 
     try:
+        # [분석 취소] 시작 전에 이미 취소됐으면 아무것도 하지 않고 끝냅니다(try 안이라 finally 정리는 그대로 돎).
+        check_cancel(cancel_event)
         # Step 0: 스트림 다운로드 (프록시용 저화질)
         await _set_status(video_id, JobStatus.DOWNLOADING)
         command = build_download_command(platform, video_url, output_path)
@@ -727,10 +735,21 @@ async def run_analysis_job(video_url: str, platform: str, video_id: str, crop_bo
                 os.remove(output_path)
             except OSError:
                 pass
+        # [분석 취소] 다운로드를 중간에 끄면 yt-dlp 가 받다 만 조각(.part, .ytdl, .temp 등)이 남습니다.
+        # 이 작업 것만 지우도록 이름이 "{video_id}_" 로 시작하는 파일만 고릅니다. 사용 중이라 못 지우면 넘어갑니다.
+        for leftover in glob.glob(os.path.join(TEMP_STORAGE_DIR, f"{glob.escape(video_id)}_*")):
+            try:
+                if os.path.isfile(leftover):
+                    os.remove(leftover)
+            except OSError:
+                pass
 
 
 async def run_analysis_job_from_file(video_path: str, video_id: str, crop_box_override=None):
+    cancel_event = _get_cancel_event(video_id)
     try:
+        # [분석 취소] 시작 전에 이미 취소됐으면 아무것도 하지 않고 끝냅니다(try 안이라 finally 정리는 그대로 돎).
+        check_cancel(cancel_event)
         await _run_pipeline_exclusively(video_id, video_path, crop_box_override)
 
     except Exception as e:
