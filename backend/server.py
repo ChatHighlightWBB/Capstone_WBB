@@ -842,7 +842,21 @@ async def cancel_analysis(video_id: str):
     if status in (JobStatus.DONE.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value):
         return {"status": status, "cancelled": False}
 
+    # 취소 표시(Event)와 외부 프로그램 목록은 이 서버 메모리에만 있어서, 다른 PC 의 서버가 돌리는 작업은
+    # 여기서 멈출 수 없습니다. host 가 없는 옛 문서는 예전처럼 이 서버의 작업으로 보고 처리합니다.
+    job_host = doc.get("host")
+    if job_host and job_host != HOST_NAME:
+        raise HTTPException(status_code=409, detail="다른 PC에서 실행 중인 분석이라 여기서 멈출 수 없어요.")
+
     _get_cancel_event(video_id).set()
+
+    # 대기 중(queued)이면 아직 아무것도 실행하지 않으므로 바로 cancelled 로 기록합니다.
+    # 그 작업은 나중에 락을 잡거나 다운로드를 시작하려는 순간 check_cancel 로 빠져나가며 같은 cancelled 를 다시 남깁니다.
+    if status == JobStatus.QUEUED.value:
+        await _set_status(video_id, JobStatus.CANCELLED, error="사용자가 분석을 멈췄어요.", cancel_requested=True)
+        print(f"⏹️ [WBB] {video_id} 대기 중인 분석을 바로 멈춤")
+        return {"status": JobStatus.CANCELLED.value, "cancelled": True}
+
     # taskkill 이 잠깐 걸릴 수 있어 이벤트 루프를 막지 않도록 스레드에서 끕니다.
     await asyncio.get_running_loop().run_in_executor(None, kill_procs, video_id)
     await db.db["jobs"].update_one(
