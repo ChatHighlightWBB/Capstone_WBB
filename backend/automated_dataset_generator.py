@@ -34,7 +34,7 @@ def load_kobert_tokenizer():
 def apply_context_aware_sentiment_booster(chat_text: str, emotion_probs: np.ndarray) -> np.ndarray:
     """
     KoBERT가 예측한 7대 감정 확률에 스트리밍 특화 자음 및 문맥 규칙을 적용합니다.
-    라벨 매핑: 0:기쁨, 1:당황, 2:분노, 3:슬픔, 4:혐오, 5:공포, 6:중립
+    라벨 매핑: 0:기쁨, 1:당황, 2:분노, 3:슬픔, 4:혐오, 5:공포, 6:평상
     """
     probs = np.copy(emotion_probs)
     text = str(chat_text).strip()
@@ -92,7 +92,7 @@ class WBBEmotionDatasetGenerator:
     """
     def __init__(self, model_dir: str = "./kobert_wbb_model"):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.labels = ['기쁨', '당황', '분노', '슬픔', '혐오', '공포', '중립']
+        self.labels = ['기쁨', '당황', '분노', '슬픔', '혐오', '공포', '평상']
 
         if os.path.exists(model_dir) and os.path.isdir(model_dir):
             # 학습 때 monologg/kobert 에 채팅 표현 9개(ㅋㅋㅋㅋ, ㄹㅈㄷ 등)를 추가한 토크나이저를 썼음.

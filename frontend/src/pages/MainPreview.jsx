@@ -241,7 +241,7 @@ const EMOTIONS = [
   { name: "슬픔", v: 0.12, c: "#3B8BFF" },
   { name: "혐오", v: 0.08, c: "#2FB07A" },
   { name: "공포", v: 0.22, c: "#555A66" },
-  { name: "중립", v: 0.4, c: "#A6A3B0" },
+  { name: "평상", v: 0.4, c: "#A6A3B0" },
 ];
 
 // 감정 그래프 예시 (0~100)
@@ -266,7 +266,7 @@ const SAMPLES = [
 
 const NUMBERS = [
   { Icon: MessagesSquare, to: 15000, suffix: "+", label: "학습한 방송 채팅 줄", note: "방송 말투 그대로 파인튜닝" },
-  { Icon: Drama, to: 7, label: "가지 감정", note: "기쁨·당황·분노·슬픔·혐오·공포·중립" },
+  { Icon: Drama, to: 7, label: "가지 감정", note: "기쁨·당황·분노·슬픔·혐오·공포·평상" },
   { Icon: Timer, to: 5, suffix: "초", label: "마다 채팅을 읽어요", note: "30초 구간을 5초씩 옮겨 가며 비교" },
   { Icon: Film, to: 0, label: "번 재인코딩", note: "원본 화질 그대로 잘라내요" },
 ];
