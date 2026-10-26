@@ -29,6 +29,13 @@ KOBERT_TOKENIZER_ID = "monologg/kobert"
 # 환경변수 STAGE2_TOP_K 로 바꿀 수 있고, 0 이하면 전부 검증합니다.
 STAGE2_TOP_K_DEFAULT = 12
 
+# 짧은 영상은 하이라이트가 영상의 60~70%를 차지해 요약이 안 됨. 합계를 min(900초, 영상 길이 × 40%)로 제한.
+# 900초 ÷ 0.4 = 37분 30초보다 긴 영상은 900초가 먼저 걸려 결과가 바뀌지 않음.
+# 2026-10-26 DB 결과 4개 근사 계산: 3분 45초 3개→1개, 10분 6개→3개, 42분·1시간 55분 변화 없음
+# (42분 토크는 지금 29.9%라 30% 상한은 여유 2초뿐이어서 40%).
+# 환경변수 SUMMARY_MAX_RATIO 로 바꿀 수 있고, 0 이하면 비율 상한을 끕니다(900초 상한만).
+SUMMARY_MAX_RATIO_DEFAULT = 0.4
+
 
 def _select_stage2_candidates(candidates, top_k) -> list:
     """
@@ -41,6 +48,38 @@ def _select_stage2_candidates(candidates, top_k) -> list:
         return candidates
     ranked = sorted(candidates, key=lambda c: (-c["window_score"], c["start_time"]))
     return sorted(ranked[:top_k], key=lambda c: c["start_time"])
+
+
+def _summary_max_ratio() -> float:
+    """
+    환경변수 SUMMARY_MAX_RATIO 를 읽어 요약 길이 비율 상한을 돌려줍니다.
+    없거나 숫자가 아니면 기본값(SUMMARY_MAX_RATIO_DEFAULT)을 씁니다.
+    """
+    try:
+        return float(os.getenv("SUMMARY_MAX_RATIO", SUMMARY_MAX_RATIO_DEFAULT))
+    except ValueError:
+        return SUMMARY_MAX_RATIO_DEFAULT
+
+
+def _select_final(scored, top_k, max_total_seconds):
+    """
+    2차 점수가 매겨진 구간 중 최종 하이라이트를 고릅니다.
+    - 최종 점수(final_highlight_score)가 큰 순으로 보고, 최대 top_k 개까지.
+    - 합계가 max_total_seconds 를 넘게 하는 구간은 건너뛰고 다음 구간을 봅니다.
+    - 첫 개는 길이와 상관없이 무조건 넣습니다(하이라이트 0개 방지).
+    돌려주는 값: (고른 구간 목록(점수 순), 합계 초)
+    """
+    sorted_clips = sorted(scored, key=lambda x: x["final_highlight_score"], reverse=True)
+    final_selected = []
+    accumulated_sec = 0.0
+
+    for clip in sorted_clips:
+        if len(final_selected) >= top_k:
+            break
+        if (accumulated_sec + clip["duration"]) <= max_total_seconds or len(final_selected) == 0:
+            final_selected.append(clip)
+            accumulated_sec += clip["duration"]
+    return final_selected, accumulated_sec
 
 
 def load_kobert_tokenizer():
@@ -184,7 +223,8 @@ class WBBStage2Refinement:
                           top_k: int = 10,
                           max_total_seconds: float = 900.0,
                           output_json: str = "final_highlight_candidates.json",
-                          cancel_event=None):
+                          cancel_event=None,
+                          video_duration_sec=None):
         if not os.path.exists(stage1_json):
             raise FileNotFoundError(f"'{stage1_json}' 파일이 없습니다.")
 
@@ -259,16 +299,17 @@ class WBBStage2Refinement:
             evaluated_clips.append(item)
             print(f" ➔ [{idx+1}/{len(candidates)}] {start}초~{end}초 | STT: \"{spoken_text[:25]}\" | 최종 점수: {final_score}")
 
-        sorted_clips = sorted(evaluated_clips, key=lambda x: x["final_highlight_score"], reverse=True)
-        final_selected = []
-        accumulated_sec = 0.0
+        # [요약 길이 상한] 짧은 영상에서 하이라이트가 영상 대부분을 차지하지 않게
+        # 합계 상한을 min(max_total_seconds, 영상 길이 × 비율)로 둡니다. 비율이 0 이하거나 길이를 모르면 그대로.
+        summary_max_ratio = _summary_max_ratio()
+        effective_max_sec = max_total_seconds
+        if summary_max_ratio > 0 and video_duration_sec:
+            ratio_cap_sec = float(video_duration_sec) * summary_max_ratio
+            if ratio_cap_sec < max_total_seconds:
+                effective_max_sec = ratio_cap_sec
+                print(f" ➔ 요약 길이 상한: 영상 {float(video_duration_sec):.0f}초 × {summary_max_ratio*100:.0f}% = {effective_max_sec:.0f}초")
 
-        for clip in sorted_clips:
-            if len(final_selected) >= top_k:
-                break
-            if (accumulated_sec + clip["duration"]) <= max_total_seconds or len(final_selected) == 0:
-                final_selected.append(clip)
-                accumulated_sec += clip["duration"]
+        final_selected, accumulated_sec = _select_final(evaluated_clips, top_k, effective_max_sec)
 
         final_selected = sorted(final_selected, key=lambda x: x["start_time"])
         for idx, c in enumerate(final_selected):

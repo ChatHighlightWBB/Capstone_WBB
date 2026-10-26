@@ -299,7 +299,9 @@ class WBBAutoHighlightPipeline:
             video_path=video_path,
             stage1_json=stage1_json_path,
             output_json=final_candidates_json,
-            cancel_event=cancel_event  # 후보 반복문 앞에서 취소 확인
+            cancel_event=cancel_event,  # 후보 반복문 앞에서 취소 확인
+            # [요약 길이 상한] 1차 탐지기가 이미 아는 영상 길이(초)를 넘겨 짧은 영상의 합계를 영상 길이 비율로 제한
+            video_duration_sec=getattr(detector, "duration_sec", None)
         )
 
         # ----------------------------------------------------
