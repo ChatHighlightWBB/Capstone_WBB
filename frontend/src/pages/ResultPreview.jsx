@@ -39,22 +39,40 @@ function formatElapsed(sec) {
 
 // 와바바 스코어 등급 (기존 WbbScore.jsx와 같은 기준)
 const GRADES = [
-  { from: 0, to: 40, name: "차분한 방송", range: "40점 미만", color: "#3B8BFF", Icon: Moon, mood: "thinking" },
-  { from: 40, to: 60, name: "잔잔한 방송", range: "40~59점", color: "#2FD18F", Icon: Leaf, mood: "happy" },
-  { from: 60, to: 80, name: "재밌는 방송", range: "60~79점", color: "#FFB020", Icon: Laugh, mood: "excited" },
-  { from: 80, to: 101, name: "역대급 방송", range: "80점 이상", color: "#FF6A5C", Icon: Flame, mood: "excited" },
+  { from: 0, to: 69, name: "잔잔한 웃음", range: "69점 미만", color: "#3B8BFF", Icon: Moon, mood: "thinking" },
+  { from: 69, to: 84, name: "웃음 포인트", range: "69~83점", color: "#2FD18F", Icon: Leaf, mood: "happy" },
+  { from: 84, to: 98, name: "빵 터진 웃음", range: "84~97점", color: "#FFB020", Icon: Laugh, mood: "excited" },
+  { from: 98, to: 101, name: "레전드 웃음", range: "98점 이상", color: "#FF6A5C", Icon: Flame, mood: "excited" },
 ];
 
 function gradeOf(score) {
   return GRADES.find((g) => score >= g.from && score < g.to) ?? GRADES[0];
 }
 
-// 결과가 나왔을 때 바바의 한마디 (기존 Result.jsx와 같은 기준)
-function babaReaction(count, score) {
-  if (score >= 80) return { mood: "excited", text: `역대급 방송이에요! 하이라이트 ${count}개를 찾았어요.` };
-  if (score >= 60) return { mood: "excited", text: `재밌는 장면이 많았어요! 하이라이트 ${count}개를 골랐어요.` };
-  if (score >= 40) return { mood: "happy", text: `잔잔한 방송이지만 반응이 모인 구간 ${count}개를 찾았어요.` };
-  return { mood: "happy", text: `차분한 방송이었어요. 그래도 시청자가 반응한 구간 ${count}개를 골랐어요.` };
+// 하이라이트 구간 채팅에서 평상을 뺀 6가지 감정 중 평균 비율이 가장 높은 감정 (채팅이 없으면 null)
+const REACTION_FIELDS = [
+  ["기쁨", "joy_pct"], ["당황", "embarrass_pct"], ["분노", "anger_pct"],
+  ["슬픔", "sadness_pct"], ["혐오", "disgust_pct"], ["공포", "fear_pct"],
+];
+function topReactionEmotion(highlights, timeSeries) {
+  const rows = (timeSeries ?? []).filter((r) =>
+    highlights.some((h) => r.timestamp >= h.start_time && r.timestamp <= h.end_time));
+  if (rows.length === 0) return null;
+  let best = null;
+  for (const [name, key] of REACTION_FIELDS) {
+    const avg = rows.reduce((sum, r) => sum + (r[key] ?? 0), 0) / rows.length;
+    if (!best || avg > best.avg) best = { name, avg };
+  }
+  return best.name;
+}
+
+// 결과가 나왔을 때 바바의 한마디 (등급 경계는 GRADES와 같음) + 기쁨이 아닌 감정이 가장 많았으면 한 줄 덧붙임
+function babaReaction(count, score, topEmotion) {
+  const extra = topEmotion && topEmotion !== "기쁨" ? ` 이번 하이라이트에서는 ${topEmotion} 반응이 가장 많았어요.` : "";
+  if (score >= 98) return { mood: "excited", text: `이 방송 최고의 웃음만 모았어요! 하이라이트 ${count}개를 찾았어요.${extra}` };
+  if (score >= 84) return { mood: "excited", text: `평소보다 확실히 빵 터진 장면들이에요! 하이라이트 ${count}개를 골랐어요.${extra}` };
+  if (score >= 69) return { mood: "happy", text: `평소보다 웃음이 모인 구간 ${count}개를 골랐어요.${extra}` };
+  return { mood: "happy", text: `웃음이 방송 내내 고르게 이어졌어요. 시청자가 반응한 구간 ${count}개를 골랐어요.${extra}` };
 }
 
 const EMPTY_HIGHLIGHT_MESSAGE = {
@@ -389,6 +407,15 @@ function ScoreRing({ score, color }) {
   );
 }
 
+// 기준표 막대 위 점수 위치(%): 네 등급 칸을 같은 너비로 그리고, 점수는 자기 칸 안에서 비율대로 놓음
+// (98~100점 칸이 막대의 2%밖에 안 돼 글자가 안 들어가는 문제 해결)
+function scalePos(score) {
+  const i = Math.max(0, GRADES.findIndex((g) => score >= g.from && score < g.to));
+  const g = GRADES[i];
+  const ratio = (Math.min(score, 100) - g.from) / (Math.min(100, g.to) - g.from);
+  return ((i + Math.min(1, Math.max(0, ratio))) / GRADES.length) * 100;
+}
+
 // 점수 기준표: 네 등급 구간 위에 이 방송의 점수 위치를 표시
 function ScoreScale({ score }) {
   const v = useAnimatedNumber(score, 1600);
@@ -397,17 +424,17 @@ function ScoreScale({ score }) {
     <div className="rp-scale">
       <div className="rp-scale-head">
         <b>와바바 스코어 기준</b>
-        <span>하이라이트 구간 채팅의 기쁨 반응을 0~100점으로 종합한 점수예요.</span>
+        <span>하이라이트의 웃음(기쁨) 반응이 이 방송 평소보다 얼마나 높은지 백분위(0~100)로 나타낸 점수예요.</span>
       </div>
       <div className="rp-scale-bar">
-        <span className="rp-scale-marker" style={{ left: `${Math.min(100, v)}%`, "--c": current.color }}>
+        <span className="rp-scale-marker" style={{ left: `${scalePos(v)}%`, "--c": current.color }}>
           {Math.round(v)}
         </span>
         {GRADES.map((g) => (
           <div
             key={g.name}
             className={`rp-scale-seg ${g === current ? "is-on" : ""}`}
-            style={{ flexGrow: Math.min(100, g.to) - g.from, "--c": g.color }}
+            style={{ flexGrow: 1, "--c": g.color }}
           >
             <i />
             <b>
@@ -424,7 +451,7 @@ function ScoreScale({ score }) {
 function ResultHero({ highlights, timeSeries, finalVideoUrl }) {
   const score = Math.round(computeWbbScore(highlights, timeSeries));
   const grade = gradeOf(score);
-  const reaction = babaReaction(highlights.length, score);
+  const reaction = babaReaction(highlights.length, score, topReactionEmotion(highlights, timeSeries));
   const totalSec = highlights.reduce((sum, h) => sum + (h.end_time - h.start_time), 0);
   const peak = timeSeries?.length
     ? timeSeries.reduce((best, cur) => (cur.joy_pct > (best?.joy_pct ?? -Infinity) ? cur : best), null)
