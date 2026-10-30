@@ -276,7 +276,7 @@ const FEATURES = [
   { Icon: Laugh, title: "방송 말투 그대로", desc: "\"ㅋㅋㅋ\", \"ㅠㅠ\", 줄임말까지 학습한 모델이 감정을 알아들어요.", fact: "채팅 1만 5천여 줄로 학습한 KoBERT" },
   { Icon: Target, title: "영상마다 다른 기준", desc: "시끄러운 게임 방송도, 잔잔한 토크 방송도 각자에 맞는 기준으로 골라요.", fact: "영상 전체 반응으로 기준 자동 설정" },
   { Icon: Mic, title: "목소리까지 확인", desc: "채팅만 보지 않고 스트리머가 실제로 한 말을 듣고 최종 결정을 내려요.", fact: "Demucs 목소리 분리 + Whisper" },
-  { Icon: Star, title: "와바바 포인트", desc: "가장 크게 터진 순간을 별로 짚고, 방송 분위기를 스코어 한 숫자로 보여줘요.", fact: "역대급부터 차분한 방송까지 4단계" },
+  { Icon: Star, title: "와바바 포인트", desc: "가장 크게 터진 순간을 별로 짚고, 하이라이트가 평소보다 얼마나 웃겼는지 스코어 한 숫자로 보여줘요.", fact: "잔잔한 웃음부터 레전드 웃음까지 4단계" },
   { Icon: Scissors, title: "무손실 클립", desc: "원본 화질 그대로 요약 영상과 하이라이트별 클립을 내려받아요.", fact: "FFmpeg 무인코딩 클리핑" },
 ];
 
@@ -1142,7 +1142,7 @@ function ResultSection() {
             <div className="np-dash-score">
               <span className="np-dash-label">와바바 스코어</span>
               <strong>87</strong>
-              <span className="np-dash-chip">역대급 방송</span>
+              <span className="np-dash-chip">빵 터진 웃음</span>
             </div>
             <div className="np-dash-player">
               <div className="np-dash-player-art">
