@@ -1451,6 +1451,8 @@ a { color: inherit; text-decoration: none; }
 
 /* ===== 감정 차트 ===== */
 .emotion-chart { margin-bottom: 40px; }
+.emotion-chart-plot { height: 320px; }
+.emotion-chart.is-compact .emotion-chart-plot { height: 160px; }
 .emotion-chart h3 { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
 
 .chart-header {

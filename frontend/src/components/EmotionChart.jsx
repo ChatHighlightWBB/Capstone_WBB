@@ -68,7 +68,7 @@ export default function EmotionChart({
   }
 
   return (
-    <div className="emotion-chart">
+    <div className={`emotion-chart${compact ? " is-compact" : ""}`}>
       {!compact && (
         <div className="chart-header">
           <h3>시간대별 감정 변화</h3>
@@ -96,10 +96,11 @@ export default function EmotionChart({
           자동 산출 임계점 <span className="mono">{recommendedJoyThreshold.toFixed(2)}%</span>
         </p>
       )}
-      <ResponsiveContainer width="100%" height={compact ? 160 : 320}>
+      <div className="emotion-chart-plot">
+      <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={timeSeriesData}
-          margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
+          margin={{ top: compact ? 10 : 28, right: 20, left: 0, bottom: 0 }}
           // 누른 지점에서 가장 가까운 데이터의 timestamp(원본 초)가 activeLabel 로 옵니다.
           // recharts 가 그래프 바깥 div 에 cursor: default 를 직접 넣어서, 손가락 커서는 style 로 덮어씁니다.
           onClick={sync ? (state) => state?.activeLabel != null && onSeek(state.activeLabel) : undefined}
@@ -157,6 +158,7 @@ export default function EmotionChart({
           )}
         </LineChart>
       </ResponsiveContainer>
+      </div>
     </div>
   );
 }

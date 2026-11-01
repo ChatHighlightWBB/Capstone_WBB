@@ -4,6 +4,7 @@ import Mascot from "../components/Mascot.jsx";
 import { Check, Clapperboard, Download, ExternalLink, Flame, Laugh, Leaf, Moon, Star, Tv } from "lucide-react";
 import EmotionChart from "../components/EmotionChart.jsx";
 import ChatLogWindow from "../components/ChatLogWindow.jsx";
+import ZoomableVideo from "../components/ZoomableVideo.jsx";
 import { computeWbbScore } from "../components/WbbScore.jsx";
 import { colorForEmotion, displayEmotion } from "../emotionColors.js";
 import { extractYoutubeId } from "../youtubeUtils.js";
@@ -306,18 +307,22 @@ function AnalyzingStage({ status, step, totalSteps, previewUrl, sourceUrl, onCan
             );
           })}
         </ol>
-        {sourceUrl && (
-          <a href={sourceUrl} target="_blank" rel="noreferrer" className="rp-an-source">
-            <ExternalLink size={15} strokeWidth={2.2} /> 원본 영상 보러가기
-          </a>
-        )}
-        {onCancel && (
-          <div className="rp-an-cancel">
-            <button type="button" className="rp-an-cancel-btn" onClick={handleCancel} disabled={cancelling}>
-              {cancelling ? "멈추는 중…" : "분석 멈추기"}
-            </button>
-            {cancelling && <small>지금 하던 작업을 정리하고 멈춰요. 최대 몇 분 걸릴 수 있어요.</small>}
-            {cancelError && <small className="rp-an-cancel-error">{cancelError}</small>}
+        {(sourceUrl || onCancel) && (
+          <div className="rp-an-actions">
+            {sourceUrl && (
+              <a href={sourceUrl} target="_blank" rel="noreferrer" className="rp-an-source">
+                <ExternalLink size={15} strokeWidth={2.2} /> 원본 영상 보러가기
+              </a>
+            )}
+            {onCancel && (
+              <div className="rp-an-cancel">
+                <button type="button" className="rp-an-cancel-btn" onClick={handleCancel} disabled={cancelling}>
+                  {cancelling ? "멈추는 중…" : "분석 멈추기"}
+                </button>
+                {cancelling && <small>지금 하던 작업을 정리하고 멈춰요. 최대 몇 분 걸릴 수 있어요.</small>}
+                {cancelError && <small className="rp-an-cancel-error">{cancelError}</small>}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -535,7 +540,7 @@ function VideoSection({ finalVideoUrl, highlights, duration, onPick }) {
           <h2 className="np-section-title">터진 순간만 모아서 한 편으로</h2>
         </div>
         <div className="rp-video-frame">
-          <video src={finalVideoUrl} controls playsInline />
+          <ZoomableVideo src={finalVideoUrl} title="요약 영상" />
         </div>
         <div className="rp-timeline" aria-label="방송 전체에서 하이라이트 위치">
           <div className="rp-timeline-track" />
@@ -641,12 +646,11 @@ function HighlightItem({ h, timeSeries, open, onToggle, index }) {
       {open && (
         <div className="rp-hl-body">
           {h.clip_url ? (
-            <video
-              ref={videoRef}
+            <ZoomableVideo
+              videoRef={videoRef}
               className="rp-hl-video"
               src={h.clip_url}
-              controls
-              playsInline
+              title={`하이라이트 ${h.rank}번 클립`}
               onLoadedMetadata={handleLoadedMetadata}
               onTimeUpdate={handleTimeUpdate}
             />
@@ -679,7 +683,7 @@ function HighlightItem({ h, timeSeries, open, onToggle, index }) {
   );
 }
 
-function HighlightsSection({ highlights, timeSeries, openRank, setOpenRank }) {
+function HighlightsSection({ highlights, timeSeries, openRank, setOpenRank, onPick }) {
   return (
     <section id="highlights" className="rp-section">
       <SectionHead
@@ -695,7 +699,7 @@ function HighlightsSection({ highlights, timeSeries, openRank, setOpenRank }) {
             index={i}
             timeSeries={timeSeries}
             open={openRank === h.rank}
-            onToggle={() => setOpenRank(openRank === h.rank ? null : h.rank)}
+            onToggle={() => (openRank === h.rank ? setOpenRank(null) : onPick(h.rank))}
           />
         ))}
       </ul>
@@ -952,6 +956,7 @@ export default function ResultPreview() {
             timeSeries={timeSeries}
             openRank={openRank}
             setOpenRank={setOpenRank}
+            onPick={pickHighlight}
           />
           <DownloadSection finalVideoUrl={result.final_video_url} highlights={highlights} />
           <section className="rp-end">

@@ -551,7 +551,72 @@
   transform-origin: 50% 100%;
 }
 
+.rp-video-frame .rp-zoomable { height: 100%; }
 .rp-video-frame video { width: 100%; height: 100%; display: block; object-fit: contain; }
+
+/* 누르면 크게 볼 수 있는 영상 */
+.rp-zoomable { position: relative; }
+.rp-zoomable > video { cursor: zoom-in; }
+
+.rp-zoomable-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(11, 13, 20, 0.72);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.rp-zoomable-btn:hover { background: var(--np-accent); }
+
+.rp-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(5, 6, 10, 0.9);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: rp-lightbox-in 0.2s ease both;
+}
+
+.rp-lightbox video {
+  width: min(100%, calc((100vh - 48px) * 16 / 9));
+  max-height: calc(100vh - 48px);
+  border-radius: 12px;
+  background: #000;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+}
+
+.rp-lightbox-close {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  cursor: pointer;
+}
+
+.rp-lightbox-close:hover { background: rgba(255, 255, 255, 0.3); }
 
 .rp-timeline {
   position: relative;
@@ -609,6 +674,7 @@
 
 /* 기존 감정 그래프 컴포넌트를 카드 안에 맞춤 */
 .rp-chart-card .emotion-chart { margin: 0; padding: 0; background: none; border: 0; box-shadow: none; }
+.rp-chart-card .emotion-chart-plot { height: clamp(200px, calc(100vh - 400px), 420px); }
 
 /* ===== 결과: 하이라이트 카드 ===== */
 .rp-hl-list {
@@ -691,21 +757,29 @@
 .rp-hl-chevron { font-size: 22px; color: var(--ink-soft); transition: transform 0.3s ease; }
 .rp-hl.is-open .rp-hl-chevron { transform: rotate(180deg); }
 
+/* 펼친 카드가 한 화면에 들어오도록 왼쪽 영상, 오른쪽 그래프·채팅으로 나눔 */
 .rp-hl-body {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 0 24px 24px 30px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  gap: 12px 16px;
+  padding: 0 24px 20px 30px;
   animation: np-rise 0.5s var(--np-ease) both;
 }
 
-.rp-hl-video { width: 100%; max-height: 520px; border-radius: 16px; background: #000; display: block; }
+.rp-hl-body > .rp-zoomable,
+.rp-hl-body > .rp-hl-empty { grid-column: 1; }
+.rp-hl-body > .rp-btn { grid-column: 1; justify-self: start; }
+
+.rp-hl-video { width: 100%; aspect-ratio: 16 / 9; border-radius: 16px; background: #000; display: block; }
 .rp-hl-empty { padding: 30px; border-radius: 16px; background: var(--surface-alt); color: var(--ink-soft); text-align: center; }
 
-.rp-hl-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.rp-hl-panel { padding: 16px; border-radius: 16px; background: var(--surface); min-width: 0; }
-.rp-hl-panel h4 { margin: 0 0 10px; font-size: 14px; }
+.rp-hl-panels { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.rp-hl-panel { padding: 12px 14px; border-radius: 16px; background: var(--surface); min-width: 0; }
+.rp-hl-panel h4 { margin: 0 0 8px; font-size: 14px; }
 .rp-hl-panel .emotion-chart { margin: 0; padding: 0; background: none; border: 0; box-shadow: none; }
+.rp-hl-panel .emotion-chart-plot { height: 100px; }
+.rp-hl-panel .chat-log-window { height: 124px; }
 
 /* ===== 결과: 다운로드 ===== */
 .rp-dl { max-width: 1160px; margin: 48px auto 0; display: flex; flex-direction: column; gap: 14px; }
@@ -838,6 +912,7 @@
 .rp-demo button.is-on { background: var(--np-accent); color: #fff; }
 
 /* ===== 애니메이션 ===== */
+@keyframes rp-lightbox-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rp-spin { to { transform: rotate(360deg); } }
 @keyframes rp-scan { from { top: -22%; } to { top: 100%; } }
 @keyframes rp-dot { 0%, 100% { transform: translateY(0); opacity: 0.4; } 50% { transform: translateY(-6px); opacity: 1; } }
@@ -846,6 +921,96 @@
 @keyframes rp-pulse {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 60%, transparent); }
   50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--c) 0%, transparent); }
+}
+
+/* ===== 분석 중 화면: 큰 화면에서는 스크롤 없이 한 화면에 ===== */
+.rp-an-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; }
+
+@media (min-width: 901px) {
+  .rp-an {
+    --an-h: clamp(180px, calc(100vh - 410px), 360px); /* 영상·분석 창 높이 */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 72px var(--np-pad) 16px;
+  }
+
+  .rp-an-head { gap: 6px; }
+  .rp-an-eyebrow { padding: 4px 12px; font-size: 13px; }
+  .rp-an-head h1 { font-size: clamp(26px, 5vh, 44px); }
+  .rp-an-head p { font-size: 15px; line-height: 1.4; }
+
+  .rp-an-progress { width: 100%; margin-top: 12px; gap: 8px; }
+  .rp-an-percent strong { font-size: clamp(32px, 6vh, 52px); }
+  .rp-an-percent > span { font-size: 18px; }
+  .rp-an-track { height: 8px; }
+  .rp-an-steps { margin-top: 2px; gap: 8px; }
+  .rp-an-steps li { padding: 7px 12px; }
+  .rp-an-source { margin-top: 0; padding: 7px 14px; }
+  .rp-an-cancel-btn { padding: 7px 14px; }
+
+  /* 영상 + 바바 + 분석 창을 가로로 */
+  .rp-an-grid {
+    width: 100%;
+    max-width: 1400px;
+    margin-top: 16px;
+    grid-template-columns: auto minmax(160px, 1fr) auto;
+    gap: clamp(20px, 3vw, 44px);
+  }
+
+  .rp-an-left { display: contents; }
+  .rp-monitor { width: calc(var(--an-h) * 16 / 9); box-sizing: content-box; padding: 8px; }
+  .rp-an-baba { margin: 0; flex-direction: column; text-align: center; }
+  .rp-an-right { width: calc(var(--an-h) * 4 / 3); }
+}
+
+/* ===== 높이가 낮은 화면 (노트북 브라우저 창 등): 구간마다 한 화면에 들어오게 줄임 ===== */
+@media (min-width: 901px) and (max-height: 820px) {
+  .rp-hero { padding: 76px var(--np-pad) 24px; }
+  .rp-hero-inner { gap: clamp(28px, 4vw, 56px); }
+  .rp-ring { width: clamp(170px, 38vh, 280px); }
+  .rp-ring-center strong { font-size: clamp(52px, 12vh, 84px); }
+  .rp-hero-right { gap: clamp(8px, 1.6vh, 14px); }
+  .rp-hero-baba .mascot { width: 48px; height: 48px; }
+  .rp-hero-baba p { font-size: clamp(19px, 3.6vh, 26px); line-height: 1.25; }
+  .rp-stats > div { padding: 8px 16px; border-radius: 14px; gap: 0; }
+  .rp-stats strong { font-size: 20px; }
+  .rp-scale { padding: 10px 16px 8px; border-radius: 14px; }
+  .rp-scale-head { margin-bottom: 32px; }
+  .rp-scale-seg b { margin-top: 2px; }
+  .rp-hero-actions .rp-btn { padding: 8px 18px; font-size: 15px; }
+
+  .rp-video-sticky { gap: 12px; padding: 72px var(--np-pad) 28px; }
+  .rp-video-head { gap: 2px; }
+  .rp-video .np-section-title { font-size: clamp(22px, 4vh, 32px); }
+  .rp-video-frame { width: min(980px, 100%, calc((100vh - 256px) * 16 / 9)); }
+  .rp-timeline { margin-top: 18px; }
+
+  .rp-section { padding: 76px var(--np-pad) 28px; }
+  .rp-section .np-head { gap: 4px; }
+  .rp-section .np-section-title { font-size: clamp(22px, 4.4vh, 34px); }
+  .rp-section .np-head-sub { margin: 0; max-width: none; font-size: 14px; line-height: 1.4; }
+  .rp-card,
+  .rp-hl-list,
+  .rp-dl { margin-top: 16px; }
+  .rp-card { padding: 14px 20px; }
+  .rp-chart-card .chart-subtitle { margin: 0; }
+  .rp-chart-card .emotion-chart-plot { height: clamp(200px, calc(100vh - 300px), 420px); }
+
+  .rp-hl-head { padding: 10px 20px 10px 26px; gap: 16px; }
+  .rp-hl-rank { font-size: 26px; }
+  .rp-hl-main { gap: 2px; }
+  .rp-hl-quote { font-size: 15px; line-height: 1.35; }
+  .rp-hl-body { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 8px 12px; padding: 0 20px 12px 26px; }
+  .rp-hl-video { height: calc(100vh - 240px); max-height: 340px; }
+  .rp-hl-panel { padding: 8px 12px; }
+  .rp-hl-panel h4 { margin-bottom: 4px; }
+  .rp-hl-panel .emotion-chart-plot { height: clamp(64px, calc(50vh - 240px), 120px); }
+  .rp-hl-panel .chat-log-window { height: clamp(96px, calc(50vh - 200px), 140px); padding: 6px 8px; }
+  .rp-btn-small { padding: 6px 12px; font-size: 13px; }
+
+  .rp-dl-main { padding: 14px 20px; }
+  .rp-dl-clip { padding: 10px 14px; }
 }
 
 /* ===== 반응형 ===== */
@@ -864,8 +1029,7 @@
 
   .rp-hl-head { grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; padding: 16px 16px 16px 22px; }
   .rp-hl-score { display: none; }
-  .rp-hl-panels { grid-template-columns: 1fr; }
-  .rp-hl-body { padding: 0 16px 18px 22px; }
+  .rp-hl-body { display: flex; flex-direction: column; padding: 0 16px 18px 22px; }
 
   .rp-demo { width: calc(100% - 24px); overflow-x: auto; }
 }

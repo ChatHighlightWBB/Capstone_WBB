@@ -2387,6 +2387,88 @@
   .np-baba-profile > div { grid-template-columns: 1fr; gap: 2px; }
 }
 
+/* 높이가 낮은 화면 (노트북 브라우저 창 등): 구간마다 한 화면에 들어오게 줄임 */
+@media (min-width: 1101px) and (max-height: 720px) {
+  .np-guide { padding: 0; }
+}
+
+@media (min-width: 901px) and (max-height: 820px) {
+  .np-hero-copy { top: 68px; }
+  .np-hero-copy h1 { margin-top: 4px; font-size: clamp(30px, 7vh, 52px); }
+  .np-hero-copy p { margin-top: 8px; font-size: 15px; line-height: 1.4; max-width: 620px; }
+  .np-hero-platforms { margin-top: 8px; }
+  .np-rig {
+    width: min(520px, 72vw, 72vh);
+    transform:
+      translate(-50%, -50%)
+      translateY(calc((1 - var(--k, 0)) * 25vh))
+      perspective(2000px)
+      rotateX(calc((1 - var(--k, 0)) * 14deg))
+      rotateY(calc((1 - var(--k, 0)) * -20deg))
+      scale(calc(1 + var(--k, 0) * (var(--zoom, 3) - 1)));
+  }
+
+  .np-guide-sticky { gap: 14px; padding: 72px var(--np-pad) 16px; box-sizing: border-box; }
+  .np-guide .np-head { gap: 2px; }
+  .np-guide .np-section-title { font-size: clamp(22px, 4.4vh, 34px); }
+  .np-guide .np-head-sub { margin: 0; font-size: 14px; }
+  .np-guide-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .np-guide-card { gap: 6px; padding: 14px 16px; }
+  .np-guide-num { width: 34px; height: 34px; font-size: 15px; }
+  .np-guide-icon { width: 34px; height: 34px; }
+  .np-guide-card h3 { margin-top: 2px; font-size: 17px; }
+  .np-guide-card p { font-size: 13px; line-height: 1.45; }
+  .np-mock { height: 84px; }
+
+  .np-features { padding: 0; }
+  .np-features-sticky { min-height: 100vh; gap: 12px; padding: 72px var(--np-pad) 16px; box-sizing: border-box; }
+  .np-features-head { gap: 2px; }
+  .np-features-head .np-section-title { font-size: clamp(22px, 4.4vh, 34px); line-height: 1.2; }
+  .np-features-grid { gap: 10px; }
+  .np-feature { gap: 2px; padding: 10px 16px; border-radius: 18px; }
+  .np-feature-emoji,
+  .np-feature-platforms { height: 30px; border-radius: 10px; }
+  .np-feature-emoji { width: 30px; }
+  .np-feature-emoji svg { width: 17px; height: 17px; }
+  .np-feature h3 { margin-top: 2px; font-size: 16px; }
+  .np-feature p { font-size: 13px; line-height: 1.4; }
+  .np-feature-fact { margin-top: 2px; padding: 2px 8px; font-size: 11px; }
+
+  .np-result-sticky { gap: 14px; padding: 70px 16px 24px; }
+  .np-result-head { gap: 2px; }
+  .np-result-head .np-section-title { font-size: clamp(22px, 4.4vh, 34px); }
+  .np-dash-wrap { width: min(860px, 94vw); }
+  .np-dash { gap: 10px; padding: 12px; }
+  .np-dash-player-art { min-height: 90px; }
+
+  .np-baba { padding: 80px var(--np-pad) 40px; }
+  .np-baba .np-head { gap: 2px; }
+  .np-baba .np-section-title { font-size: clamp(22px, 4.4vh, 34px); }
+  .np-baba .np-head-sub { margin: 0; font-size: 14px; }
+  .np-baba-stage { --orbit: clamp(220px, calc(100vh - 290px), 420px); margin-top: 8px; }
+  .np-baba-orbit { margin: 36px 50px; }
+  .np-baba-center .mascot { width: 120px; height: 120px; }
+  .np-baba-moon { width: 78px; height: 78px; margin: -39px 0 0 -39px; }
+  .np-baba-moon .mascot { width: 44px; height: 44px; }
+  .np-baba-card { padding: 16px 24px; }
+  .np-baba-card h3 { font-size: 26px; }
+  .np-baba-card-desc { font-size: 14px; line-height: 1.5; }
+  .np-baba-card dl { margin-top: 10px; gap: 8px; }
+  .np-baba-card-nav { margin-top: 12px; }
+  .np-baba-info { margin-top: 40px; }
+
+  .np-start { padding: 96px 16px 40px; }
+  .np-start-card { padding: 40px 48px 20px; border-radius: 28px; }
+  .np-start-mascot .mascot { width: 64px; height: 64px; }
+  .np-start .np-head { gap: 2px; }
+  .np-start .np-section-title { font-size: clamp(24px, 5vh, 36px); }
+  .np-start .np-head-sub { margin: 0; font-size: 15px; }
+  .np-start-platforms { margin-top: 10px; }
+  .np-start-platforms > span { padding: 5px 12px; font-size: 13px; }
+  .np-start-form { margin-top: 12px; }
+  .np-start-history { margin-top: 48px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .np-flow-device,
   .np-dash { transform: none; }
