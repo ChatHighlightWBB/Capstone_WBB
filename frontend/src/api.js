@@ -40,7 +40,11 @@ export async function getResult(videoId) {
   const res = await fetch(`${API_BASE}/api/v1/result/${videoId}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `결과 조회 실패 (HTTP ${res.status})`);
+    const error = new Error(err.detail || `결과 조회 실패 (HTTP ${res.status})`);
+    // 최근 내역에서 "서버에 결과가 없음(404)"과 "서버 꺼짐·오류"를 구분할 수 있게 HTTP 상태 코드를 담음
+    // (서버가 꺼져 있으면 fetch 자체가 실패해서 status 가 없는 오류가 됨)
+    error.status = res.status;
+    throw error;
   }
   return res.json();
 }
