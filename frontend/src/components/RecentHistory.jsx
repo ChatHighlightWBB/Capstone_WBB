@@ -9,7 +9,9 @@ function timeAgo(createdAt) {
   if (diffMin < 1) return "방금 전";
   if (diffMin < 60) return `${diffMin}분 전`;
   const diffHour = Math.floor(diffMin / 60);
-  return `${diffHour}시간 전`;
+  // 내역이 시간으로 지워지지 않아 며칠 지난 항목도 남으므로, 24시간부터는 "○일 전"으로 표시
+  if (diffHour < 24) return `${diffHour}시간 전`;
+  return `${Math.floor(diffHour / 24)}일 전`;
 }
 
 const STATUS_TEXT = {
@@ -19,6 +21,7 @@ const STATUS_TEXT = {
   done: "완료",
   failed: "실패",
   cancelled: "멈춤", // 사용자가 "분석 멈추기"로 멈춘 분석
+  unreachable: "확인 불가", // 서버 꺼짐·연결 실패·서버 오류로 상태를 못 가져온 경우 (목록에서 지우지 않음)
 };
 
 // 다른 곳(다른 브라우저, 공유받은 링크 등)에서 받은 video_id로 바로 이동할 때 씁니다.
@@ -68,9 +71,14 @@ export default function RecentHistory() {
           try {
             const data = await getResult(item.videoId);
             return { ...item, status: data.video_info.status };
-          } catch {
-            removeFromHistory(item.videoId);
-            return null;
+          } catch (e) {
+            // 서버에 결과가 없을 때(404)만 목록에서 지움. 서버 보관 기간이 지나 삭제되면 404 가 됨
+            if (e.status === 404) {
+              removeFromHistory(item.videoId);
+              return null;
+            }
+            // 그 밖의 실패(서버가 아직 안 켜짐, 연결 실패, 500 등)는 저장소에 그대로 두고 "확인 불가"로 보여줌
+            return { ...item, status: "unreachable" };
           }
         })
       );
@@ -94,7 +102,8 @@ export default function RecentHistory() {
   return (
     <section className="recent-history">
       <h2>최근 내 분석 내역</h2>
-      <p className="section-sub">이 브라우저에서 최근 4시간 안에 요청한 것만 보여요.</p>
+      {/* 4시간 만료를 없애서 안내 문구도 실제 동작(서버에서 지워지면 목록에서도 빠짐)에 맞춤 */}
+      <p className="section-sub">이 브라우저에서 요청한 분석이 보여요. 서버에서 결과가 지워지면 목록에서도 빠져요.</p>
 
       {items.length > 0 ? (
         <ul className="recent-history-list">
